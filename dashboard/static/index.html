@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Isolation Dashboard</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="bg">
+      <div class="grain"></div>
+    </div>
+
+    <header class="topbar">
+      <div class="brand">
+        <div class="mark">I</div>
+        <div class="title">
+          <div class="name">Isolation</div>
+          <div class="sub">LLM Quant Ops Console</div>
+        </div>
+      </div>
+      <div class="meta" id="meta">
+        <div class="pill" id="pill-status">status</div>
+        <div class="pill ghost" id="pill-runtime">runtime</div>
+        <div class="pill ghost" id="pill-broker">broker</div>
+        <div class="pill ghost" id="pill-date">date</div>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <section class="grid">
+        <div class="card hero">
+          <div class="card-hd">
+            <div class="card-title">Equity</div>
+            <div class="card-note">cash + positions_value（以当日 RAG 市价估算）</div>
+          </div>
+          <div class="chart" id="chart-equity"></div>
+          <div class="kpi-row">
+            <div class="kpi">
+              <div class="k">Latest Equity</div>
+              <div class="v" id="kpi-equity">—</div>
+            </div>
+            <div class="kpi">
+              <div class="k">Cash</div>
+              <div class="v" id="kpi-cash">—</div>
+            </div>
+            <div class="kpi">
+              <div class="k">Positions Value</div>
+              <div class="v" id="kpi-pos">—</div>
+            </div>
+            <div class="kpi">
+              <div class="k">Turnover</div>
+              <div class="v" id="kpi-turnover">—</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-hd">
+            <div class="card-title">Runtime</div>
+            <div class="card-note">heartbeat / scheduler / kill switch</div>
+          </div>
+          <div class="strategy">
+            <div class="block">
+              <div class="label">Highlights</div>
+              <div class="list" id="list-runtime-highlights"></div>
+            </div>
+            <div class="block">
+              <div class="label">State File</div>
+              <pre class="mono" id="text-heartbeat">—</pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-hd">
+            <div class="card-title">Portfolio</div>
+            <div class="card-note">最新持仓（shares / value / weight）</div>
+          </div>
+          <div class="table" id="table-positions"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-hd">
+            <div class="card-title">Strategy</div>
+            <div class="card-note">LLM reasoning / allocations / evidence</div>
+          </div>
+          <div class="strategy">
+            <div class="block">
+              <div class="label">Selected Strategies</div>
+              <div class="chips" id="chips-strategies"></div>
+            </div>
+            <div class="block">
+              <div class="label">Reasoning</div>
+              <pre class="mono" id="text-reasoning">—</pre>
+            </div>
+            <div class="block">
+              <div class="label">LLM Audit Trail</div>
+              <pre class="mono audit" id="text-llm-audit">—</pre>
+            </div>
+            <div class="block split">
+              <div>
+                <div class="label">Allocations</div>
+                <div class="table" id="table-allocations"></div>
+              </div>
+              <div>
+                <div class="label">Evidence</div>
+                <div class="list" id="list-evidence"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-hd">
+            <div class="card-title">Execution</div>
+            <div class="card-note">orders / execution_report / reconcile</div>
+          </div>
+          <div class="exec">
+            <div class="block">
+              <div class="label">Orders</div>
+              <div class="table" id="table-orders"></div>
+            </div>
+            <div class="block">
+              <div class="label">Execution Report</div>
+              <div class="table" id="table-exec"></div>
+            </div>
+            <div class="block">
+              <div class="label">Reconciliation</div>
+              <pre class="mono" id="text-reconcile">—</pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-hd">
+            <div class="card-title">Review</div>
+            <div class="card-note">daily attribution preview / execution quality / position changes</div>
+          </div>
+          <div class="strategy">
+            <div class="block">
+              <div class="label">Highlights</div>
+              <div class="list" id="list-review-highlights"></div>
+            </div>
+            <div class="block split">
+              <div>
+                <div class="label">Attribution Preview</div>
+                <pre class="mono" id="text-review-summary">—</pre>
+              </div>
+              <div>
+                <div class="label">Position Changes</div>
+                <div class="table" id="table-review-changes"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-hd">
+            <div class="card-title">Alerts</div>
+            <div class="card-note">alerts.jsonl（最新 200 条）</div>
+          </div>
+          <div class="list tall" id="list-alerts"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-hd">
+            <div class="card-title">System Log</div>
+            <div class="card-note">trading_system.log（尾部）</div>
+          </div>
+          <pre class="mono tall" id="text-log">—</pre>
+        </div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <div class="foot-inner">
+        <div class="foot-note">Local dashboard for inspection & replay. No trading controls exposed.</div>
+        <div class="foot-actions">
+          <button class="btn" id="btn-refresh">Refresh</button>
+        </div>
+      </div>
+    </footer>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
