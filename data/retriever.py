@@ -2,14 +2,18 @@ from utils.logger import setup_logger
 logger = setup_logger(__name__)
 
 import csv
+from datetime import datetime, timedelta
 import requests
 import time
 import yfinance as yf
 from io import StringIO
-from config import TECH_UNIVERSE, BROKER_TYPE
+from zoneinfo import ZoneInfo
+
+from config import BROKER_TYPE, HALF_DAY_RTH_END, MARKET_TIMEZONE, RTH_END, RTH_START, TECH_UNIVERSE
 from .cache import CacheDB
 from .earnings_agent import EarningsResearchAgent
 from .ibkr_data import IBKRDataProvider
+from utils.trading_hours import get_market_session
 from utils.retry import retry_call
 from utils.events import emit_event, classify_exception
 
@@ -169,12 +173,66 @@ class RAGRetriever:
             )
 
         return "\n".join(lines)
+
+    def _fallback_to_stale(self, cache_key: str, message: str):
+        stale = self.cache.get_stale(cache_key)
+        if stale is not None:
+            logger.warning(message)
+            return stale
+        return None
+
+    @staticmethod
+    def _parse_hhmm_to_hour_minute(s: str, default_hour: int, default_minute: int):
+        try:
+            hour, minute = (s or "").split(":")
+            return int(hour), int(minute)
+        except Exception:
+            return default_hour, default_minute
+
+    def _seconds_until_next_market_refresh(self) -> int:
+        tz = ZoneInfo(MARKET_TIMEZONE)
+        now_local = datetime.now(tz)
+        close_hour, close_minute = self._parse_hhmm_to_hour_minute(RTH_END, 16, 0)
+        refresh_dt = now_local.replace(hour=close_hour, minute=close_minute, second=0, microsecond=0) + timedelta(hours=2)
+
+        session_today = get_market_session(now_local, MARKET_TIMEZONE, RTH_START, RTH_END, HALF_DAY_RTH_END)
+        if session_today.get("is_trading_day") and now_local < refresh_dt:
+            target = refresh_dt
+        else:
+            target = None
+            for days_ahead in range(1, 8):
+                candidate = now_local + timedelta(days=days_ahead)
+                candidate_midday = candidate.replace(hour=12, minute=0, second=0, microsecond=0)
+                session = get_market_session(candidate_midday, MARKET_TIMEZONE, RTH_START, RTH_END, HALF_DAY_RTH_END)
+                if session.get("is_trading_day"):
+                    target = candidate_midday.replace(hour=close_hour, minute=close_minute) + timedelta(hours=2)
+                    break
+            if target is None:
+                target = now_local + timedelta(hours=18)
+
+        return max(int((target - now_local).total_seconds()), 60)
+
+    def _cache_ttl_for_news(self) -> int:
+        return max(min(self._seconds_until_next_market_refresh(), 24 * 60 * 60), 6 * 60 * 60)
+
+    def _cache_ttl_for_macro(self) -> int:
+        return max(min(self._seconds_until_next_market_refresh(), 12 * 60 * 60), 4 * 60 * 60)
+
+    def _cache_ttl_for_market(self) -> int:
+        return self._seconds_until_next_market_refresh()
+
+    @staticmethod
+    def _cache_ttl_for_fundamental() -> int:
+        return 7 * 24 * 60 * 60
         
     def fetch_news(self) -> str:
         """获取宏观/科技新闻"""
         neg = self.cache.get("neg_news")
         if neg:
             logger.warning(f"📰 [RAG 检索] 新闻数据源短暂不可用，跳过外部请求: {neg}")
+            stale = self._fallback_to_stale("news", "📰 [RAG 检索] 使用最近一次成功的新闻缓存作为兜底。")
+            if stale is not None:
+                return stale
             return "新闻获取失败，短暂降级为无重大事件假设。"
 
         cached_data = self.cache.get("news")
@@ -191,12 +249,15 @@ class RAGRetriever:
                 return "今日暂无重大宏观新闻发布。"
             news_items = [f"标题: {item.get('title', '')}\n摘要: {item.get('summary', '')}" for item in data["feed"]]
             result = "\n\n".join(news_items)
-            self.cache.set("news", result)
+            self.cache.set("news", result, ttl_seconds=self._cache_ttl_for_news())
             emit_event("data.news", "INFO", "ok", "fetched", {"provider": "alphavantage"})
             return result
         except Exception as e:
             emit_event("data.news", "ERROR", classify_exception(e), str(e), {"provider": "alphavantage"})
             self.cache.set_ttl("neg_news", f"{type(e).__name__}", 30 * 60)
+            stale = self._fallback_to_stale("news", "📰 [RAG 检索] 新闻请求失败，回退到最近一次成功的缓存。")
+            if stale is not None:
+                return stale
             return "新闻获取失败。"
 
     def fetch_market_data(self) -> dict:
@@ -205,6 +266,9 @@ class RAGRetriever:
         neg = self.cache.get(neg_key)
         if neg:
             logger.warning(f"📊 [RAG 检索] 市场数据源短暂不可用，跳过外部请求: {neg}")
+            stale = self._fallback_to_stale(cache_key := ("market_data_ibkr" if BROKER_TYPE == "ibkr" else "market_data"), "📊 [RAG 检索] 使用最近一次成功的市场数据缓存作为兜底。")
+            if stale is not None:
+                return stale
             dummy_prices = self._dummy_prices()
             return {"context_string": "市场数据获取失败，无法提供涨跌幅数据。", "prices": dummy_prices}
 
@@ -219,11 +283,14 @@ class RAGRetriever:
             try:
                 result = IBKRDataProvider().fetch_market_snapshot(TECH_UNIVERSE)
                 if result.get("prices"):
-                    self.cache.set(cache_key, result)
+                    self.cache.set(cache_key, result, ttl_seconds=self._cache_ttl_for_market())
                     emit_event("data.market", "INFO", "ok", "fetched", {"provider": "ibkr"})
                     return result
                 logger.warning("⚠️ IBKR 行情返回为空，将回退到本地兜底价格。")
                 self.cache.set_ttl(neg_key, "ibkr_empty_prices", 60)
+                stale = self._fallback_to_stale(cache_key, "📊 [RAG 检索] IBKR 行情为空，回退到最近一次成功的市场缓存。")
+                if stale is not None:
+                    return stale
                 dummy_prices = self._dummy_prices()
                 return {
                     "context_string": "市场数据获取失败，无法提供涨跌幅数据。",
@@ -233,6 +300,9 @@ class RAGRetriever:
                 logger.warning(f"⚠️ IBKR 行情获取失败，将回退到本地兜底价格: {e}")
                 emit_event("data.market", "ERROR", classify_exception(e), str(e), {"provider": "ibkr"})
                 self.cache.set_ttl(neg_key, f"{type(e).__name__}", 60)
+                stale = self._fallback_to_stale(cache_key, "📊 [RAG 检索] IBKR 行情失败，回退到最近一次成功的市场缓存。")
+                if stale is not None:
+                    return stale
                 dummy_prices = self._dummy_prices()
                 return {
                     "context_string": "市场数据获取失败，无法提供涨跌幅数据。",
@@ -243,7 +313,7 @@ class RAGRetriever:
             logger.info("📊 [RAG 检索] 优先通过 Alpha Vantage 获取科技股日线数据...")
             try:
                 result = self._fetch_market_data_from_alpha_vantage()
-                self.cache.set(cache_key, result)
+                self.cache.set(cache_key, result, ttl_seconds=self._cache_ttl_for_market())
                 emit_event("data.market", "INFO", "ok", "fetched", {"provider": "alphavantage"})
                 return result
             except Exception as e:
@@ -267,13 +337,16 @@ class RAGRetriever:
                 "context_string": "\n".join(market_context),
                 "prices": current_prices
             }
-            self.cache.set(cache_key, result)
+            self.cache.set(cache_key, result, ttl_seconds=self._cache_ttl_for_market())
             emit_event("data.market", "INFO", "ok", "fetched", {"provider": "yfinance"})
             return result
         except Exception as e:
             logger.warning(f"⚠️ 市场数据获取失败 (可能是 API 限制): {e}")
             emit_event("data.market", "ERROR", classify_exception(e), str(e), {"provider": "yfinance"})
             self.cache.set_ttl(neg_key, f"{type(e).__name__}", 10 * 60)
+            stale = self._fallback_to_stale(cache_key, "📊 [RAG 检索] 市场数据请求失败，回退到最近一次成功的市场缓存。")
+            if stale is not None:
+                return stale
             dummy_prices = self._dummy_prices()
             return {
                 "context_string": "市场数据获取失败，无法提供涨跌幅数据。",
@@ -286,6 +359,9 @@ class RAGRetriever:
         neg = self.cache.get(neg_key)
         if neg:
             logger.warning(f"🌍 [RAG 检索] 宏观数据源短暂不可用，跳过外部请求: {neg}")
+            stale = self._fallback_to_stale(cache_key := ("macro_data_ibkr" if BROKER_TYPE == "ibkr" else "macro_data"), "🌍 [RAG 检索] 使用最近一次成功的宏观缓存作为兜底。")
+            if stale is not None:
+                return stale
             return "宏观数据获取失败，假设处于中性宏观环境。"
 
         cache_key = "macro_data_ibkr" if BROKER_TYPE == "ibkr" else "macro_data"
@@ -299,21 +375,24 @@ class RAGRetriever:
             try:
                 result = IBKRDataProvider().fetch_macro_snapshot()
                 macro_str = result.get("context_string") or "宏观数据获取失败，假设处于中性宏观环境。"
-                self.cache.set(cache_key, macro_str)
+                self.cache.set(cache_key, macro_str, ttl_seconds=self._cache_ttl_for_macro())
                 emit_event("data.macro", "INFO", "ok", "fetched", {"provider": "ibkr"})
                 return macro_str
             except Exception as e:
                 logger.warning(f"⚠️ IBKR 宏观数据获取失败: {e}")
                 emit_event("data.macro", "ERROR", classify_exception(e), str(e), {"provider": "ibkr"})
                 self.cache.set_ttl(neg_key, f"{type(e).__name__}", 60)
+                stale = self._fallback_to_stale(cache_key, "🌍 [RAG 检索] IBKR 宏观失败，回退到最近一次成功的宏观缓存。")
+                if stale is not None:
+                    return stale
                 macro_str = "宏观数据获取失败，假设处于中性宏观环境。"
-                self.cache.set(cache_key, macro_str)
+                self.cache.set(cache_key, macro_str, ttl_seconds=self._cache_ttl_for_macro())
                 return macro_str
 
         logger.info("🌍 [RAG 检索] 优先通过 FRED 获取宏观经济指标...")
         try:
             macro_info = self._fetch_macro_data_from_fred()
-            self.cache.set(cache_key, macro_info)
+            self.cache.set(cache_key, macro_info, ttl_seconds=self._cache_ttl_for_macro())
             emit_event("data.macro", "INFO", "ok", "fetched", {"provider": "fred"})
             return macro_info
         except Exception as e:
@@ -331,13 +410,16 @@ class RAGRetriever:
                 f"- VIX 恐慌指数: {vix_latest:.2f} (注: >30代表恐慌，<20代表贪婪/平稳)\n"
                 f"- 10年期美债收益率: {tnx_latest:.2f}% (注: 收益率飙升通常利空科技股估值)"
             )
-            self.cache.set(cache_key, macro_info)
+            self.cache.set(cache_key, macro_info, ttl_seconds=self._cache_ttl_for_macro())
             emit_event("data.macro", "INFO", "ok", "fetched", {"provider": "yfinance"})
             return macro_info
         except Exception as e:
             logger.warning(f"⚠️ 宏观数据获取失败: {e}")
             emit_event("data.macro", "ERROR", classify_exception(e), str(e), {"provider": "yfinance"})
             self.cache.set_ttl(neg_key, f"{type(e).__name__}", 10 * 60)
+            stale = self._fallback_to_stale(cache_key, "🌍 [RAG 检索] 宏观请求失败，回退到最近一次成功的宏观缓存。")
+            if stale is not None:
+                return stale
             return "宏观数据获取失败，假设处于中性宏观环境。"
 
     def fetch_fundamental_data(self) -> str:
@@ -345,6 +427,9 @@ class RAGRetriever:
         neg = self.cache.get("neg_fundamental_primary")
         if neg:
             logger.warning(f"🏢 [RAG 检索] 基本面数据源短暂不可用，跳过外部请求: {neg}")
+            stale = self._fallback_to_stale("fundamental_data_v2", "🏢 [RAG 检索] 使用最近一次成功的基本面缓存作为兜底。")
+            if stale is not None:
+                return stale
             return "基本面数据获取失败，假设各公司估值处于行业平均水平。"
 
         cached_data = self.cache.get("fundamental_data_v2")
@@ -356,7 +441,7 @@ class RAGRetriever:
             logger.info("🏢 [RAG 检索] 优先通过 Alpha Vantage 获取科技股基本面数据...")
             try:
                 result = self._fetch_fundamental_data_from_alpha_vantage()
-                self.cache.set("fundamental_data_v2", result)
+                self.cache.set("fundamental_data_v2", result, ttl_seconds=self._cache_ttl_for_fundamental())
                 emit_event("data.fundamental", "INFO", "ok", "fetched", {"provider": "alphavantage"})
                 return result
             except Exception as e:
@@ -381,11 +466,14 @@ class RAGRetriever:
                     logger.warning(f"⚠️ 财报研究生成失败: {ticker} {e}")
             
             result = "\n".join(fundamental_context)
-            self.cache.set("fundamental_data_v2", result)
+            self.cache.set("fundamental_data_v2", result, ttl_seconds=self._cache_ttl_for_fundamental())
             emit_event("data.fundamental", "INFO", "ok", "fetched", {"provider": "yfinance"})
             return result
         except Exception as e:
             logger.warning(f"⚠️ 基本面数据获取失败: {e}")
             emit_event("data.fundamental", "ERROR", classify_exception(e), str(e), {"provider": "yfinance"})
             self.cache.set_ttl("neg_fundamental_primary", f"{type(e).__name__}", 6 * 60 * 60)
+            stale = self._fallback_to_stale("fundamental_data_v2", "🏢 [RAG 检索] 基本面请求失败，回退到最近一次成功的基本面缓存。")
+            if stale is not None:
+                return stale
             return "基本面数据获取失败，假设各公司估值处于行业平均水平。"

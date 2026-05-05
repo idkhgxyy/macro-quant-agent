@@ -30,18 +30,26 @@ class CacheDB:
         if isinstance(expires_at, (int, float)):
             if time.time() <= float(expires_at):
                 return record.get("data")
-            self.cache.pop(key, None)
-            self._flush()
             return None
 
         today = datetime.now().strftime("%Y-%m-%d")
         if record.get("date") == today:
             return record.get("data")
         return None
+
+    def get_stale(self, key):
+        record = self.cache.get(key)
+        if not isinstance(record, dict):
+            return None
+        return record.get("data")
         
-    def set(self, key, data):
-        today = datetime.now().strftime("%Y-%m-%d")
-        self.cache[key] = {"date": today, "data": data}
+    def set(self, key, data, ttl_seconds: int = None):
+        if ttl_seconds is not None:
+            ttl = max(int(ttl_seconds), 1)
+            self.cache[key] = {"expires_at": time.time() + ttl, "data": data}
+        else:
+            today = datetime.now().strftime("%Y-%m-%d")
+            self.cache[key] = {"date": today, "data": data}
         self._flush()
 
     def set_ttl(self, key, data, ttl_seconds: int):
