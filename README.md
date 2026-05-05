@@ -235,3 +235,7 @@ Detailed internal task tracking is maintained in `TASKS.md`.
 ## Disclaimer
 
 This project is for engineering exploration, research, and technical demonstration only. It does not constitute financial advice, and any LLM-generated allocation should be treated as experimental output rather than an investment recommendation.
+
+## License
+
+MIT. See `LICENSE`.
