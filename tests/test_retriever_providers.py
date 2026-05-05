@@ -1,0 +1,88 @@
+import unittest
+from urllib.parse import parse_qs, urlparse
+from unittest.mock import patch
+
+from config import TECH_UNIVERSE
+from data.retriever import RAGRetriever
+
+
+def _ticker_from_url(url: str) -> str:
+    qs = parse_qs(urlparse(url).query)
+    return str((qs.get("symbol") or [""])[0] or "")
+
+
+class RetrieverProviderTests(unittest.TestCase):
+    def test_fetch_market_data_from_alpha_vantage_parses_prices(self):
+        retriever = RAGRetriever(alpha_vantage_key="demo")
+
+        def fake_json(url: str):
+            ticker = _ticker_from_url(url)
+            self.assertIn(ticker, TECH_UNIVERSE)
+            return {
+                "Meta Data": {"2. Symbol": ticker},
+                "Time Series (Daily)": {
+                    "2026-05-01": {
+                        "4. close": "110.00",
+                        "5. adjusted close": "110.00",
+                    },
+                    "2026-05-02": {
+                        "4. close": "121.00",
+                        "5. adjusted close": "121.00",
+                    },
+                },
+            }
+
+        with patch.object(retriever, "_av_get_json", side_effect=fake_json):
+            result = retriever._fetch_market_data_from_alpha_vantage()
+
+        self.assertEqual(result.get("source"), "alphavantage_daily")
+        self.assertEqual(len(result.get("prices", {})), len(TECH_UNIVERSE))
+        self.assertAlmostEqual(result["prices"]["AAPL"], 121.0)
+        self.assertIn("AAPL", result.get("context_string", ""))
+        self.assertIn("+10.00%", result.get("context_string", ""))
+
+    def test_fetch_macro_data_from_fred_parses_latest_values(self):
+        retriever = RAGRetriever(alpha_vantage_key="demo")
+
+        def fake_text(url: str):
+            if "VIXCLS" in url:
+                return "DATE,VIXCLS\n2026-05-01,20.10\n2026-05-02,21.25\n"
+            if "DGS10" in url:
+                return "DATE,DGS10\n2026-05-01,4.15\n2026-05-02,4.20\n"
+            raise AssertionError(url)
+
+        with patch.object(retriever, "_http_get_text", side_effect=fake_text):
+            text = retriever._fetch_macro_data_from_fred()
+
+        self.assertIn("21.25", text)
+        self.assertIn("4.20%", text)
+
+    def test_fetch_fundamental_data_from_alpha_vantage_parses_overview(self):
+        retriever = RAGRetriever(alpha_vantage_key="demo")
+
+        def fake_json(url: str):
+            ticker = _ticker_from_url(url)
+            self.assertIn(ticker, TECH_UNIVERSE)
+            return {
+                "Symbol": ticker,
+                "PERatio": "25.5",
+                "PriceToBookRatio": "8.2",
+                "ProfitMargin": "0.31",
+                "ReturnOnEquityTTM": "0.45",
+                "QuarterlyRevenueGrowthYOY": "0.12",
+                "QuarterlyEarningsGrowthYOY": "0.18",
+                "EPS": "12.3",
+                "AnalystTargetPrice": "250.0",
+            }
+
+        with patch.object(retriever, "_av_get_json", side_effect=fake_json):
+            text = retriever._fetch_fundamental_data_from_alpha_vantage()
+
+        self.assertIn("- AAPL:", text)
+        self.assertIn("当前市盈率(PE) 25.50", text)
+        self.assertIn("营收同比 12.0%", text)
+        self.assertIn("盈利同比 18.0%", text)
+
+
+if __name__ == "__main__":
+    unittest.main()
