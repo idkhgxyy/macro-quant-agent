@@ -1,5 +1,7 @@
 # Macro Quant Agent
 
+[English](./README.md) | [简体中文](./README.zh-CN.md)
+
 LLM-driven macro/tech equity allocation system built with Python, featuring retrieval-augmented context, portfolio risk controls, backtesting, scheduler/heartbeat monitoring, and a local dashboard for audit and replay.
 
 ## Project Status
