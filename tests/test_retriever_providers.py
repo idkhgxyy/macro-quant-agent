@@ -2,6 +2,8 @@ import unittest
 from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 
+import pandas as pd
+
 from data.cache import CacheDB
 from config import TECH_UNIVERSE
 from data.retriever import RAGRetriever
@@ -98,6 +100,31 @@ class RetrieverProviderTests(unittest.TestCase):
                 text = self.retriever.fetch_news()
 
         self.assertEqual(text, "cached news")
+
+    def test_fetch_market_data_falls_back_to_yfinance_when_alpha_vantage_is_on_cooldown(self):
+        with patch("data.cache.time.time", return_value=1000):
+            self.retriever.cache.set_ttl(
+                "neg_market_alphavantage",
+                {"failure_type": "rate_limit", "detail": "cooldown"},
+                ttl_seconds=3600,
+            )
+
+        frame = pd.DataFrame(
+            {ticker: [100.0, 110.0] for ticker in TECH_UNIVERSE},
+            index=["2026-05-01", "2026-05-02"],
+        )
+
+        with patch("data.cache.time.time", return_value=1100):
+            with patch("data.retriever.yf.download", return_value={"Close": frame}):
+                result = self.retriever.fetch_market_data()
+
+        self.assertIn("AAPL", result.get("prices", {}))
+        status = self.retriever.get_provider_status().get("market", {})
+        self.assertEqual(status.get("selected_provider"), "yfinance")
+        self.assertEqual(status.get("mode"), "fresh")
+        attempts = status.get("attempts", [])
+        self.assertTrue(any(x.get("provider") == "alphavantage" and x.get("outcome") == "cooldown" for x in attempts))
+        self.assertTrue(any(x.get("provider") == "yfinance" and x.get("outcome") == "success" for x in attempts))
 
 
 if __name__ == "__main__":

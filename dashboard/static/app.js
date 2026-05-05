@@ -300,6 +300,18 @@ async function refresh() {
   runtimeHighlights.push(
     `<div class="item"><div class="row"><span class="tag ${lastRun?.error ? "bad" : "good"}">Recent Run</span></div><div class="msg">start=${escapeHtml(fmtTs(lastRun?.started_at))} end=${escapeHtml(fmtTs(lastRun?.ended_at))}</div><div class="meta">duration=${escapeHtml(lastRun?.duration_sec ?? "—")} error=${escapeHtml(lastRun?.error || "none")}</div></div>`
   );
+  const providerStatus = rPayload?.provider_status || {};
+  ["macro", "fundamental", "news", "market"].forEach((kind) => {
+    const item = providerStatus?.[kind];
+    if (!item) return;
+    const attemptText = Array.isArray(item.attempts)
+      ? item.attempts.map((x) => `${x.provider}:${x.outcome}`).join(" -> ")
+      : "—";
+    const tagClass = item.mode === "degraded" ? "bad" : item.mode === "stale_cache" ? "warn" : "good";
+    runtimeHighlights.push(
+      `<div class="item"><div class="row"><span class="tag ${tagClass}">${escapeHtml(kind)}</span></div><div class="msg">provider=${escapeHtml(item.selected_provider || "—")} mode=${escapeHtml(item.mode || "—")}</div><div class="meta">detail=${escapeHtml(item.detail || "—")} attempts=${escapeHtml(attemptText)}</div></div>`
+    );
+  });
   if (killSwitch?.recovery_hint) {
     runtimeHighlights.push(
       `<div class="item"><div class="row"><span class="tag ${heartbeat?.kill_switch_locked ? "warn" : "good"}">Recovery</span></div><div class="msg">${escapeHtml(killSwitch.recovery_hint)}</div></div>`

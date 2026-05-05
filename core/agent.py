@@ -191,6 +191,9 @@ class MacroQuantAgent:
             news_data = self.retriever.fetch_news()
             market_data_dict = self.retriever.fetch_market_data()
             metrics["rag_sec"] = round(time.perf_counter() - t_rag0, 6)
+            provider_status = self.retriever.get_provider_status()
+            metrics["provider_status"] = provider_status
+            log_struct("rag_provider_status", provider_status)
             
             market_context_str = market_data_dict["context_string"]
             current_prices = market_data_dict["prices"]
@@ -208,6 +211,7 @@ class MacroQuantAgent:
                     "fundamental": fundamental_data,
                     "news": news_data,
                     "market": market_data_dict,
+                    "provider_status": provider_status,
                 },
             )
                 
