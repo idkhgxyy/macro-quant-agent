@@ -38,6 +38,17 @@ class CacheDBTests(unittest.TestCase):
 
         self.assertEqual(cache.get_stale("k"), {"v": 2})
 
+    def test_get_record_contains_stored_at(self):
+        cache = CacheDB(filepath=self.path)
+
+        with patch("data.cache.time.time", return_value=3000):
+            cache.set("k", {"v": 3}, ttl_seconds=5)
+
+        record = cache.get_record("k")
+        self.assertIsInstance(record, dict)
+        self.assertEqual(record.get("stored_at"), 3000)
+        self.assertEqual(record.get("data"), {"v": 3})
+
 
 if __name__ == "__main__":
     unittest.main()

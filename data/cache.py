@@ -42,19 +42,27 @@ class CacheDB:
         if not isinstance(record, dict):
             return None
         return record.get("data")
+
+    def get_record(self, key):
+        record = self.cache.get(key)
+        if not isinstance(record, dict):
+            return None
+        return dict(record)
         
     def set(self, key, data, ttl_seconds: int = None):
+        now_ts = time.time()
         if ttl_seconds is not None:
             ttl = max(int(ttl_seconds), 1)
-            self.cache[key] = {"expires_at": time.time() + ttl, "data": data}
+            self.cache[key] = {"expires_at": now_ts + ttl, "stored_at": now_ts, "data": data}
         else:
             today = datetime.now().strftime("%Y-%m-%d")
-            self.cache[key] = {"date": today, "data": data}
+            self.cache[key] = {"date": today, "stored_at": now_ts, "data": data}
         self._flush()
 
     def set_ttl(self, key, data, ttl_seconds: int):
+        now_ts = time.time()
         ttl = max(int(ttl_seconds), 1)
-        self.cache[key] = {"expires_at": time.time() + ttl, "data": data}
+        self.cache[key] = {"expires_at": now_ts + ttl, "stored_at": now_ts, "data": data}
         self._flush()
 
     def _flush(self):

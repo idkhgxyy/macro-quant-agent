@@ -126,6 +126,34 @@ class RetrieverProviderTests(unittest.TestCase):
         self.assertTrue(any(x.get("provider") == "alphavantage" and x.get("outcome") == "cooldown" for x in attempts))
         self.assertTrue(any(x.get("provider") == "yfinance" and x.get("outcome") == "success" for x in attempts))
 
+    def test_fetch_market_data_reuses_stale_before_daily_refresh_window(self):
+        with patch("data.cache.time.time", return_value=1000):
+            self.retriever.cache.set("market_data", {"context_string": "stale market", "prices": {"AAPL": 123.0}}, ttl_seconds=1)
+
+        with patch("data.cache.time.time", return_value=1100):
+            with patch.object(self.retriever, "_is_ready_for_daily_refresh", return_value=False):
+                with patch("data.retriever.yf.download", side_effect=AssertionError("should not call yfinance")):
+                    result = self.retriever.fetch_market_data()
+
+        self.assertEqual(result["context_string"], "stale market")
+        status = self.retriever.get_provider_status().get("market", {})
+        self.assertEqual(status.get("selected_provider"), "stale_cache")
+        self.assertEqual(status.get("detail"), "before_daily_refresh_window")
+
+    def test_fetch_fundamental_data_reuses_stale_before_weekly_refresh_window(self):
+        with patch("data.cache.time.time", return_value=1000):
+            self.retriever.cache.set("fundamental_data_v2", "stale fundamentals", ttl_seconds=1)
+
+        with patch("data.cache.time.time", return_value=1100):
+            with patch.object(self.retriever, "_is_ready_for_weekly_refresh", return_value=False):
+                with patch.object(self.retriever, "_fetch_fundamental_data_from_alpha_vantage", side_effect=AssertionError("should not call av")):
+                    text = self.retriever.fetch_fundamental_data()
+
+        self.assertEqual(text, "stale fundamentals")
+        status = self.retriever.get_provider_status().get("fundamental", {})
+        self.assertEqual(status.get("selected_provider"), "stale_cache")
+        self.assertEqual(status.get("detail"), "before_weekly_refresh_window")
+
 
 if __name__ == "__main__":
     unittest.main()

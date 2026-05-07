@@ -260,6 +260,56 @@ class RAGRetriever:
         return dict(self._provider_status)
 
     @staticmethod
+    def _now_market_time():
+        return datetime.now(ZoneInfo(MARKET_TIMEZONE))
+
+    def _is_ready_for_daily_refresh(self) -> bool:
+        now_local = self._now_market_time()
+        close_hour, close_minute = self._parse_hhmm_to_hour_minute(RTH_END, 16, 0)
+        refresh_dt = now_local.replace(hour=close_hour, minute=close_minute, second=0, microsecond=0) + timedelta(hours=2)
+        session_today = get_market_session(now_local, MARKET_TIMEZONE, RTH_START, RTH_END, HALF_DAY_RTH_END)
+        return bool(session_today.get("is_trading_day")) and now_local >= refresh_dt
+
+    def _is_ready_for_weekly_refresh(self) -> bool:
+        now_local = self._now_market_time()
+        close_hour, close_minute = self._parse_hhmm_to_hour_minute(RTH_END, 16, 0)
+        refresh_dt = now_local.replace(hour=close_hour, minute=close_minute, second=0, microsecond=0) + timedelta(hours=2)
+        return now_local.weekday() == 0 and now_local >= refresh_dt
+
+    def _stale_age_seconds(self, cache_key: str):
+        record = self.cache.get_record(cache_key)
+        if not record:
+            return None
+        stored_at = record.get("stored_at")
+        if not isinstance(stored_at, (int, float)):
+            return None
+        return max(time.time() - float(stored_at), 0.0)
+
+    def _planned_stale_reuse(self, data_kind: str, cache_key: str, cadence: str, max_age_seconds: int, detail: str):
+        stale = self.cache.get_stale(cache_key)
+        if stale is None:
+            return None
+
+        age_seconds = self._stale_age_seconds(cache_key)
+        if isinstance(age_seconds, (int, float)) and age_seconds > max_age_seconds:
+            return None
+
+        if cadence == "daily":
+            ready = self._is_ready_for_daily_refresh()
+        elif cadence == "weekly":
+            ready = self._is_ready_for_weekly_refresh()
+        else:
+            ready = True
+
+        if ready:
+            return None
+
+        logger.info(f"♻️ [RAG 检索] {data_kind} 尚未到刷新窗口，继续复用最近一次成功快照。")
+        self._trace_provider_attempt(data_kind, "stale_cache", "hit", detail)
+        self._finish_provider_trace(data_kind, "stale_cache", "stale_cache", detail)
+        return stale
+
+    @staticmethod
     def _parse_hhmm_to_hour_minute(s: str, default_hour: int, default_minute: int):
         try:
             hour, minute = (s or "").split(":")
@@ -314,6 +364,16 @@ class RAGRetriever:
             self._finish_provider_trace("news", "cache", "cache_hit", "fresh_cache")
             return cached_data
 
+        planned_stale = self._planned_stale_reuse(
+            "news",
+            "news",
+            cadence="daily",
+            max_age_seconds=5 * 24 * 60 * 60,
+            detail="before_daily_refresh_window",
+        )
+        if planned_stale is not None:
+            return planned_stale
+
         neg = self._provider_cooldown_reason("news", "alphavantage")
         if neg:
             logger.warning(f"📰 [RAG 检索] Alpha Vantage 新闻源仍在冷却中，先跳过: {neg}")
@@ -360,6 +420,16 @@ class RAGRetriever:
             self._trace_provider_attempt("market", "cache", "hit", "fresh_cache")
             self._finish_provider_trace("market", "cache", "cache_hit", "fresh_cache")
             return cached_data
+
+        planned_stale = self._planned_stale_reuse(
+            "market",
+            cache_key,
+            cadence="daily",
+            max_age_seconds=5 * 24 * 60 * 60,
+            detail="before_daily_refresh_window",
+        )
+        if planned_stale is not None:
+            return planned_stale
 
         if BROKER_TYPE == "ibkr":
             neg = self._provider_cooldown_reason("market", "ibkr")
@@ -476,6 +546,16 @@ class RAGRetriever:
             self._finish_provider_trace("macro", "cache", "cache_hit", "fresh_cache")
             return cached_data
 
+        planned_stale = self._planned_stale_reuse(
+            "macro",
+            cache_key,
+            cadence="daily",
+            max_age_seconds=5 * 24 * 60 * 60,
+            detail="before_daily_refresh_window",
+        )
+        if planned_stale is not None:
+            return planned_stale
+
         if BROKER_TYPE == "ibkr":
             neg = self._provider_cooldown_reason("macro", "ibkr")
             if neg:
@@ -572,6 +652,16 @@ class RAGRetriever:
             self._trace_provider_attempt("fundamental", "cache", "hit", "fresh_cache")
             self._finish_provider_trace("fundamental", "cache", "cache_hit", "fresh_cache")
             return cached_data
+
+        planned_stale = self._planned_stale_reuse(
+            "fundamental",
+            "fundamental_data_v2",
+            cadence="weekly",
+            max_age_seconds=21 * 24 * 60 * 60,
+            detail="before_weekly_refresh_window",
+        )
+        if planned_stale is not None:
+            return planned_stale
 
         if self.av_key:
             neg = self._provider_cooldown_reason("fundamental", "alphavantage")
