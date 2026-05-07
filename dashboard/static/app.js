@@ -37,6 +37,15 @@ const fmtTs = (value) => {
   return d.toLocaleString();
 };
 
+const fmtAge = (seconds) => {
+  const x = Number(seconds);
+  if (!Number.isFinite(x) || x < 0) return "—";
+  if (x < 60) return `${x.toFixed(0)}s`;
+  if (x < 3600) return `${(x / 60).toFixed(1)}m`;
+  if (x < 86400) return `${(x / 3600).toFixed(1)}h`;
+  return `${(x / 86400).toFixed(1)}d`;
+};
+
 async function jget(path) {
   const r = await fetch(withToken(path), { cache: "no-store", headers: authHeaders() });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -308,8 +317,9 @@ async function refresh() {
       ? item.attempts.map((x) => `${x.provider}:${x.outcome}`).join(" -> ")
       : "—";
     const tagClass = item.mode === "degraded" ? "bad" : item.mode === "stale_cache" ? "warn" : "good";
+    const ageText = Number.isFinite(Number(item.age_seconds)) ? fmtAge(item.age_seconds) : "—";
     runtimeHighlights.push(
-      `<div class="item"><div class="row"><span class="tag ${tagClass}">${escapeHtml(kind)}</span></div><div class="msg">provider=${escapeHtml(item.selected_provider || "—")} mode=${escapeHtml(item.mode || "—")}</div><div class="meta">detail=${escapeHtml(item.detail || "—")} attempts=${escapeHtml(attemptText)}</div></div>`
+      `<div class="item"><div class="row"><span class="tag ${tagClass}">${escapeHtml(kind)}</span></div><div class="msg">provider=${escapeHtml(item.selected_provider || "—")} mode=${escapeHtml(item.mode || "—")} age=${escapeHtml(ageText)}</div><div class="meta">detail=${escapeHtml(item.detail || "—")} attempts=${escapeHtml(attemptText)}</div></div>`
     );
   });
   if (killSwitch?.recovery_hint) {

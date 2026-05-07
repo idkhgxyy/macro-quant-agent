@@ -139,6 +139,7 @@ class RetrieverProviderTests(unittest.TestCase):
         status = self.retriever.get_provider_status().get("market", {})
         self.assertEqual(status.get("selected_provider"), "stale_cache")
         self.assertEqual(status.get("detail"), "before_daily_refresh_window")
+        self.assertEqual(status.get("age_seconds"), 100.0)
 
     def test_fetch_fundamental_data_reuses_stale_before_weekly_refresh_window(self):
         with patch("data.cache.time.time", return_value=1000):
@@ -153,6 +154,7 @@ class RetrieverProviderTests(unittest.TestCase):
         status = self.retriever.get_provider_status().get("fundamental", {})
         self.assertEqual(status.get("selected_provider"), "stale_cache")
         self.assertEqual(status.get("detail"), "before_weekly_refresh_window")
+        self.assertEqual(status.get("age_seconds"), 100.0)
 
 
 if __name__ == "__main__":

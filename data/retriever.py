@@ -215,6 +215,15 @@ class RAGRetriever:
         trace["mode"] = mode
         trace["detail"] = detail
 
+    def _set_provider_trace_meta(self, data_kind: str, **kwargs):
+        trace = self._provider_status.setdefault(
+            data_kind,
+            {"selected_provider": None, "mode": None, "detail": "", "attempts": [], "ts": datetime.utcnow().isoformat() + "Z"},
+        )
+        for key, value in kwargs.items():
+            if value is not None:
+                trace[key] = value
+
     @staticmethod
     def _provider_neg_key(data_kind: str, provider: str) -> str:
         return f"neg_{data_kind}_{provider}"
@@ -307,6 +316,7 @@ class RAGRetriever:
         logger.info(f"♻️ [RAG 检索] {data_kind} 尚未到刷新窗口，继续复用最近一次成功快照。")
         self._trace_provider_attempt(data_kind, "stale_cache", "hit", detail)
         self._finish_provider_trace(data_kind, "stale_cache", "stale_cache", detail)
+        self._set_provider_trace_meta(data_kind, age_seconds=round(float(age_seconds), 1) if age_seconds is not None else None)
         return stale
 
     @staticmethod
@@ -360,8 +370,10 @@ class RAGRetriever:
         cached_data = self.cache.get("news")
         if cached_data:
             logger.info("📰 [RAG 检索] 读取本地缓存的新闻数据 (避免 API 限流)...")
+            cache_age = self._stale_age_seconds("news")
             self._trace_provider_attempt("news", "cache", "hit", "fresh_cache")
             self._finish_provider_trace("news", "cache", "cache_hit", "fresh_cache")
+            self._set_provider_trace_meta("news", age_seconds=round(float(cache_age), 1) if cache_age is not None else None)
             return cached_data
 
         planned_stale = self._planned_stale_reuse(
@@ -403,8 +415,10 @@ class RAGRetriever:
 
         stale = self._fallback_to_stale("news", "📰 [RAG 检索] 新闻请求失败，回退到最近一次成功的缓存。")
         if stale is not None:
+            stale_age = self._stale_age_seconds("news")
             self._trace_provider_attempt("news", "stale_cache", "hit", "stale_fallback")
             self._finish_provider_trace("news", "stale_cache", "stale_cache", "fallback_after_provider_failure")
+            self._set_provider_trace_meta("news", age_seconds=round(float(stale_age), 1) if stale_age is not None else None)
             return stale
 
         self._finish_provider_trace("news", "none", "degraded", "no_provider_available")
@@ -417,8 +431,10 @@ class RAGRetriever:
         cached_data = self.cache.get(cache_key)
         if cached_data:
             logger.info("📊 [RAG 检索] 读取本地缓存的市场数据 (避免 API 限流)...")
+            cache_age = self._stale_age_seconds(cache_key)
             self._trace_provider_attempt("market", "cache", "hit", "fresh_cache")
             self._finish_provider_trace("market", "cache", "cache_hit", "fresh_cache")
+            self._set_provider_trace_meta("market", age_seconds=round(float(cache_age), 1) if cache_age is not None else None)
             return cached_data
 
         planned_stale = self._planned_stale_reuse(
@@ -458,8 +474,10 @@ class RAGRetriever:
 
             stale = self._fallback_to_stale(cache_key, "📊 [RAG 检索] IBKR 行情失败，回退到最近一次成功的市场缓存。")
             if stale is not None:
+                stale_age = self._stale_age_seconds(cache_key)
                 self._trace_provider_attempt("market", "stale_cache", "hit", "stale_fallback")
                 self._finish_provider_trace("market", "stale_cache", "stale_cache", "fallback_after_ibkr_failure")
+                self._set_provider_trace_meta("market", age_seconds=round(float(stale_age), 1) if stale_age is not None else None)
                 return stale
             self._finish_provider_trace("market", "none", "degraded", "ibkr_unavailable")
             dummy_prices = self._dummy_prices()
@@ -525,8 +543,10 @@ class RAGRetriever:
 
         stale = self._fallback_to_stale(cache_key, "📊 [RAG 检索] 市场数据请求失败，回退到最近一次成功的市场缓存。")
         if stale is not None:
+            stale_age = self._stale_age_seconds(cache_key)
             self._trace_provider_attempt("market", "stale_cache", "hit", "stale_fallback")
             self._finish_provider_trace("market", "stale_cache", "stale_cache", "fallback_after_provider_failure")
+            self._set_provider_trace_meta("market", age_seconds=round(float(stale_age), 1) if stale_age is not None else None)
             return stale
         self._finish_provider_trace("market", "none", "degraded", "no_provider_available")
         dummy_prices = self._dummy_prices()
@@ -542,8 +562,10 @@ class RAGRetriever:
         cached_data = self.cache.get(cache_key)
         if cached_data:
             logger.info("🌍 [RAG 检索] 读取本地缓存的宏观经济指标 (避免 API 限流)...")
+            cache_age = self._stale_age_seconds(cache_key)
             self._trace_provider_attempt("macro", "cache", "hit", "fresh_cache")
             self._finish_provider_trace("macro", "cache", "cache_hit", "fresh_cache")
+            self._set_provider_trace_meta("macro", age_seconds=round(float(cache_age), 1) if cache_age is not None else None)
             return cached_data
 
         planned_stale = self._planned_stale_reuse(
@@ -580,8 +602,10 @@ class RAGRetriever:
 
             stale = self._fallback_to_stale(cache_key, "🌍 [RAG 检索] IBKR 宏观失败，回退到最近一次成功的宏观缓存。")
             if stale is not None:
+                stale_age = self._stale_age_seconds(cache_key)
                 self._trace_provider_attempt("macro", "stale_cache", "hit", "stale_fallback")
                 self._finish_provider_trace("macro", "stale_cache", "stale_cache", "fallback_after_ibkr_failure")
+                self._set_provider_trace_meta("macro", age_seconds=round(float(stale_age), 1) if stale_age is not None else None)
                 return stale
             self._finish_provider_trace("macro", "none", "degraded", "ibkr_unavailable")
             return "宏观数据获取失败，假设处于中性宏观环境。"
@@ -636,8 +660,10 @@ class RAGRetriever:
 
         stale = self._fallback_to_stale(cache_key, "🌍 [RAG 检索] 宏观请求失败，回退到最近一次成功的宏观缓存。")
         if stale is not None:
+            stale_age = self._stale_age_seconds(cache_key)
             self._trace_provider_attempt("macro", "stale_cache", "hit", "stale_fallback")
             self._finish_provider_trace("macro", "stale_cache", "stale_cache", "fallback_after_provider_failure")
+            self._set_provider_trace_meta("macro", age_seconds=round(float(stale_age), 1) if stale_age is not None else None)
             return stale
         self._finish_provider_trace("macro", "none", "degraded", "no_provider_available")
         return "宏观数据获取失败，假设处于中性宏观环境。"
@@ -649,8 +675,10 @@ class RAGRetriever:
         cached_data = self.cache.get("fundamental_data_v2")
         if cached_data:
             logger.info("🏢 [RAG 检索] 读取本地缓存的基本面数据 (避免 API 限流)...")
+            cache_age = self._stale_age_seconds("fundamental_data_v2")
             self._trace_provider_attempt("fundamental", "cache", "hit", "fresh_cache")
             self._finish_provider_trace("fundamental", "cache", "cache_hit", "fresh_cache")
+            self._set_provider_trace_meta("fundamental", age_seconds=round(float(cache_age), 1) if cache_age is not None else None)
             return cached_data
 
         planned_stale = self._planned_stale_reuse(
@@ -721,8 +749,10 @@ class RAGRetriever:
 
         stale = self._fallback_to_stale("fundamental_data_v2", "🏢 [RAG 检索] 基本面请求失败，回退到最近一次成功的基本面缓存。")
         if stale is not None:
+            stale_age = self._stale_age_seconds("fundamental_data_v2")
             self._trace_provider_attempt("fundamental", "stale_cache", "hit", "stale_fallback")
             self._finish_provider_trace("fundamental", "stale_cache", "stale_cache", "fallback_after_provider_failure")
+            self._set_provider_trace_meta("fundamental", age_seconds=round(float(stale_age), 1) if stale_age is not None else None)
             return stale
         self._finish_provider_trace("fundamental", "none", "degraded", "no_provider_available")
         return "基本面数据获取失败，假设各公司估值处于行业平均水平。"
