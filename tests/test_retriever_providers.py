@@ -162,6 +162,28 @@ class RetrieverProviderTests(unittest.TestCase):
         self.assertEqual(status.get("budget_used"), 12)
         self.assertTrue(any(x.get("provider") == "alphavantage" and x.get("outcome") == "budget_skip" for x in status.get("attempts", [])))
 
+    def test_fetch_news_reuses_stale_when_budget_is_near_limit(self):
+        with patch("data.cache.time.time", return_value=1000):
+            self.retriever.cache.set("news", "near-limit stale news", ttl_seconds=1)
+            self.retriever.cache.set(
+                "budget_news_alphavantage",
+                {"window": "daily", "used": 10, "limit": 12, "cost": 1, "provider": "alphavantage"},
+            )
+
+        with patch("data.cache.time.time", return_value=1100):
+            with patch.object(self.retriever, "_is_ready_for_daily_refresh", return_value=True):
+                with patch("data.retriever.requests.get", side_effect=AssertionError("should not call Alpha Vantage")):
+                    text = self.retriever.fetch_news()
+
+        self.assertEqual(text, "near-limit stale news")
+        status = self.retriever.get_provider_status().get("news", {})
+        self.assertEqual(status.get("selected_provider"), "stale_cache")
+        self.assertEqual(status.get("detail"), "budget_near_limit_preserve_quota")
+        self.assertEqual(status.get("budget_state"), "near_limit")
+        self.assertEqual(status.get("budget_used"), 10)
+        self.assertEqual(status.get("age_seconds"), 100.0)
+        self.assertTrue(any(x.get("provider") == "alphavantage" and x.get("outcome") == "budget_near_limit" for x in status.get("attempts", [])))
+
     def test_fetch_market_data_exposes_budget_state_on_success(self):
         result_payload = {"context_string": "fresh market", "prices": {"AAPL": 111.0}}
 

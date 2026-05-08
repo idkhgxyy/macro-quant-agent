@@ -330,6 +330,30 @@ class RAGRetriever:
         )
         return True
 
+    def _budget_aware_stale_reuse(self, data_kind: str, provider: str, cache_key: str, max_age_seconds: int, detail: str):
+        snapshot = self._provider_budget_snapshot(data_kind, provider)
+        if not isinstance(snapshot, dict):
+            return None
+
+        self._set_provider_budget_meta(data_kind, provider, snapshot)
+        if snapshot.get("state") != "near_limit":
+            return None
+
+        stale = self.cache.get_stale(cache_key)
+        if stale is None:
+            return None
+
+        age_seconds = self._stale_age_seconds(cache_key)
+        if isinstance(age_seconds, (int, float)) and age_seconds > max_age_seconds:
+            return None
+
+        logger.info(f"♻️ [RAG 检索] {data_kind} 的 {provider} 预算接近上限，优先复用旧快照保留免费额度。")
+        self._trace_provider_attempt(data_kind, provider, "budget_near_limit", detail)
+        self._trace_provider_attempt(data_kind, "stale_cache", "hit", detail)
+        self._finish_provider_trace(data_kind, "stale_cache", "stale_cache", detail)
+        self._set_provider_trace_meta(data_kind, age_seconds=round(float(age_seconds), 1) if age_seconds is not None else None)
+        return stale
+
     def _provider_cooldown_seconds(self, data_kind: str, failure_type: str) -> int:
         base = {
             "rate_limit": 45 * 60,
@@ -488,6 +512,16 @@ class RAGRetriever:
         if planned_stale is not None:
             return planned_stale
 
+        budget_stale = self._budget_aware_stale_reuse(
+            "news",
+            "alphavantage",
+            "news",
+            max_age_seconds=5 * 24 * 60 * 60,
+            detail="budget_near_limit_preserve_quota",
+        )
+        if budget_stale is not None:
+            return budget_stale
+
         neg = self._provider_cooldown_reason("news", "alphavantage")
         if neg:
             logger.warning(f"📰 [RAG 检索] Alpha Vantage 新闻源仍在冷却中，先跳过: {neg}")
@@ -592,6 +626,16 @@ class RAGRetriever:
             }
 
         if self.av_key:
+            budget_stale = self._budget_aware_stale_reuse(
+                "market",
+                "alphavantage",
+                cache_key,
+                max_age_seconds=5 * 24 * 60 * 60,
+                detail="budget_near_limit_preserve_quota",
+            )
+            if budget_stale is not None:
+                return budget_stale
+
             neg = self._provider_cooldown_reason("market", "alphavantage")
             if neg:
                 logger.warning(f"📊 [RAG 检索] Alpha Vantage 市场源仍在冷却中，先跳过: {neg}")
@@ -614,6 +658,16 @@ class RAGRetriever:
                         self._trace_provider_attempt("market", "alphavantage", "failed", str(e), failure_type=failure_type)
                         self._activate_provider_cooldown("market", "alphavantage", failure_type, str(e))
                         emit_event("data.market", "ERROR", failure_type, str(e), {"provider": "alphavantage"})
+
+        budget_stale = self._budget_aware_stale_reuse(
+            "market",
+            "yfinance",
+            cache_key,
+            max_age_seconds=5 * 24 * 60 * 60,
+            detail="budget_near_limit_preserve_quota",
+        )
+        if budget_stale is not None:
+            return budget_stale
 
         neg = self._provider_cooldown_reason("market", "yfinance")
         if neg:
@@ -721,6 +775,16 @@ class RAGRetriever:
             self._finish_provider_trace("macro", "none", "degraded", "ibkr_unavailable")
             return "宏观数据获取失败，假设处于中性宏观环境。"
 
+        budget_stale = self._budget_aware_stale_reuse(
+            "macro",
+            "fred",
+            cache_key,
+            max_age_seconds=5 * 24 * 60 * 60,
+            detail="budget_near_limit_preserve_quota",
+        )
+        if budget_stale is not None:
+            return budget_stale
+
         neg = self._provider_cooldown_reason("macro", "fred")
         if neg:
             logger.warning(f"🌍 [RAG 检索] FRED 宏观源仍在冷却中，先跳过: {neg}")
@@ -743,6 +807,16 @@ class RAGRetriever:
                     self._trace_provider_attempt("macro", "fred", "failed", str(e), failure_type=failure_type)
                     self._activate_provider_cooldown("macro", "fred", failure_type, str(e))
                     emit_event("data.macro", "ERROR", failure_type, str(e), {"provider": "fred"})
+
+        budget_stale = self._budget_aware_stale_reuse(
+            "macro",
+            "yfinance",
+            cache_key,
+            max_age_seconds=5 * 24 * 60 * 60,
+            detail="budget_near_limit_preserve_quota",
+        )
+        if budget_stale is not None:
+            return budget_stale
 
         neg = self._provider_cooldown_reason("macro", "yfinance")
         if neg:
@@ -809,6 +883,16 @@ class RAGRetriever:
             return planned_stale
 
         if self.av_key:
+            budget_stale = self._budget_aware_stale_reuse(
+                "fundamental",
+                "alphavantage",
+                "fundamental_data_v2",
+                max_age_seconds=21 * 24 * 60 * 60,
+                detail="budget_near_limit_preserve_quota",
+            )
+            if budget_stale is not None:
+                return budget_stale
+
             neg = self._provider_cooldown_reason("fundamental", "alphavantage")
             if neg:
                 logger.warning(f"🏢 [RAG 检索] Alpha Vantage 基本面源仍在冷却中，先跳过: {neg}")
@@ -831,6 +915,16 @@ class RAGRetriever:
                         self._trace_provider_attempt("fundamental", "alphavantage", "failed", str(e), failure_type=failure_type)
                         self._activate_provider_cooldown("fundamental", "alphavantage", failure_type, str(e))
                         emit_event("data.fundamental", "ERROR", failure_type, str(e), {"provider": "alphavantage"})
+
+        budget_stale = self._budget_aware_stale_reuse(
+            "fundamental",
+            "yfinance",
+            "fundamental_data_v2",
+            max_age_seconds=21 * 24 * 60 * 60,
+            detail="budget_near_limit_preserve_quota",
+        )
+        if budget_stale is not None:
+            return budget_stale
 
         neg = self._provider_cooldown_reason("fundamental", "yfinance")
         if neg:
