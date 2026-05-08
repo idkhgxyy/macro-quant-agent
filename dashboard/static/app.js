@@ -46,6 +46,14 @@ const fmtAge = (seconds) => {
   return `${(x / 86400).toFixed(1)}d`;
 };
 
+const budgetClass = (state) => {
+  const s = String(state || "").toLowerCase();
+  if (s === "exhausted") return "bad";
+  if (s === "near_limit") return "warn";
+  if (s === "ok") return "good";
+  return "";
+};
+
 async function jget(path) {
   const r = await fetch(withToken(path), { cache: "no-store", headers: authHeaders() });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -319,10 +327,15 @@ async function refresh() {
     const tagClass = item.mode === "degraded" ? "bad" : item.mode === "stale_cache" ? "warn" : "good";
     const ageText = Number.isFinite(Number(item.age_seconds)) ? fmtAge(item.age_seconds) : "—";
     const budgetText = Number.isFinite(Number(item.budget_limit))
-      ? `${item.budget_state || "ok"} ${item.budget_used || 0}/${item.budget_limit}`
+      ? `${item.budget_used || 0}/${item.budget_limit}`
       : "—";
+    const budgetRemainingText = Number.isFinite(Number(item.budget_remaining))
+      ? `${item.budget_remaining} left`
+      : "—";
+    const budgetStateText = item.budget_state || "—";
+    const budgetProviderText = item.budget_provider || item.selected_provider || "—";
     runtimeHighlights.push(
-      `<div class="item"><div class="row"><span class="tag ${tagClass}">${escapeHtml(kind)}</span></div><div class="msg">provider=${escapeHtml(item.selected_provider || "—")} mode=${escapeHtml(item.mode || "—")} age=${escapeHtml(ageText)}</div><div class="meta">detail=${escapeHtml(item.detail || "—")} budget=${escapeHtml(budgetText)} attempts=${escapeHtml(attemptText)}</div></div>`
+      `<div class="item"><div class="row"><span class="tag ${tagClass}">${escapeHtml(kind)}</span><span class="tag ${budgetClass(budgetStateText)}">${escapeHtml(budgetStateText)}</span></div><div class="msg">provider=${escapeHtml(item.selected_provider || "—")} mode=${escapeHtml(item.mode || "—")} age=${escapeHtml(ageText)}</div><div class="meta">budget_provider=${escapeHtml(budgetProviderText)} used=${escapeHtml(budgetText)} remaining=${escapeHtml(budgetRemainingText)} cost=${escapeHtml(item.budget_cost ?? "—")}</div><div class="meta">detail=${escapeHtml(item.detail || "—")} attempts=${escapeHtml(attemptText)}</div></div>`
     );
   });
   if (killSwitch?.recovery_hint) {
