@@ -228,6 +228,108 @@ class RAGRetriever:
     def _provider_neg_key(data_kind: str, provider: str) -> str:
         return f"neg_{data_kind}_{provider}"
 
+    @staticmethod
+    def _provider_budget_key(data_kind: str, provider: str) -> str:
+        return f"budget_{data_kind}_{provider}"
+
+    @staticmethod
+    def _provider_budget_state(used: int, limit: int, cost: int) -> str:
+        safe_limit = max(int(limit or 0), 1)
+        safe_cost = max(int(cost or 0), 1)
+        safe_used = max(int(used or 0), 0)
+        if safe_used + safe_cost > safe_limit or safe_used >= safe_limit:
+            return "exhausted"
+        if safe_used / safe_limit >= 0.8:
+            return "near_limit"
+        return "ok"
+
+    def _provider_budget_config(self, data_kind: str, provider: str):
+        tech_count = max(len(TECH_UNIVERSE), 1)
+        configs = {
+            ("news", "alphavantage"): {"window": "daily", "limit": 12, "cost": 1},
+            ("market", "alphavantage"): {"window": "daily", "limit": 36, "cost": tech_count},
+            ("fundamental", "alphavantage"): {"window": "daily", "limit": 27, "cost": tech_count},
+            ("macro", "fred"): {"window": "daily", "limit": 24, "cost": 2},
+            ("market", "yfinance"): {"window": "daily", "limit": 24, "cost": 1},
+            ("macro", "yfinance"): {"window": "daily", "limit": 24, "cost": 1},
+            ("fundamental", "yfinance"): {"window": "daily", "limit": 27, "cost": tech_count},
+        }
+        cfg = configs.get((data_kind, provider))
+        return dict(cfg) if isinstance(cfg, dict) else None
+
+    def _provider_budget_snapshot(self, data_kind: str, provider: str):
+        cfg = self._provider_budget_config(data_kind, provider)
+        if not cfg:
+            return None
+
+        current = self.cache.get(self._provider_budget_key(data_kind, provider))
+        used = 0
+        if isinstance(current, dict):
+            try:
+                used = max(int(current.get("used") or 0), 0)
+            except Exception:
+                used = 0
+
+        limit = max(int(cfg.get("limit") or 1), 1)
+        cost = max(int(cfg.get("cost") or 1), 1)
+        remaining = max(limit - used, 0)
+        return {
+            "provider": provider,
+            "window": str(cfg.get("window") or "daily"),
+            "used": used,
+            "limit": limit,
+            "cost": cost,
+            "remaining": remaining,
+            "state": self._provider_budget_state(used, limit, cost),
+        }
+
+    def _set_provider_budget_meta(self, data_kind: str, provider: str, snapshot: dict):
+        if not isinstance(snapshot, dict):
+            return
+        self._set_provider_trace_meta(
+            data_kind,
+            budget_provider=provider,
+            budget_window=snapshot.get("window"),
+            budget_used=snapshot.get("used"),
+            budget_limit=snapshot.get("limit"),
+            budget_cost=snapshot.get("cost"),
+            budget_remaining=snapshot.get("remaining"),
+            budget_state=snapshot.get("state"),
+        )
+
+    def _consume_provider_budget(self, data_kind: str, provider: str):
+        snapshot = self._provider_budget_snapshot(data_kind, provider)
+        if not isinstance(snapshot, dict):
+            return True
+
+        self._set_provider_budget_meta(data_kind, provider, snapshot)
+        if snapshot.get("remaining", 0) < snapshot.get("cost", 1):
+            detail = f"daily_budget_exhausted:{snapshot.get('used', 0)}/{snapshot.get('limit', 0)}"
+            self._trace_provider_attempt(data_kind, provider, "budget_skip", detail)
+            return False
+
+        next_used = int(snapshot.get("used", 0)) + int(snapshot.get("cost", 1))
+        limit = int(snapshot.get("limit", 1))
+        updated = {
+            "window": snapshot.get("window"),
+            "used": next_used,
+            "limit": limit,
+            "cost": snapshot.get("cost"),
+            "provider": provider,
+        }
+        self.cache.set(self._provider_budget_key(data_kind, provider), updated)
+        self._set_provider_budget_meta(
+            data_kind,
+            provider,
+            {
+                **snapshot,
+                "used": next_used,
+                "remaining": max(limit - next_used, 0),
+                "state": self._provider_budget_state(next_used, limit, int(snapshot.get("cost", 1))),
+            },
+        )
+        return True
+
     def _provider_cooldown_seconds(self, data_kind: str, failure_type: str) -> int:
         base = {
             "rate_limit": 45 * 60,
@@ -391,27 +493,30 @@ class RAGRetriever:
             logger.warning(f"📰 [RAG 检索] Alpha Vantage 新闻源仍在冷却中，先跳过: {neg}")
             self._trace_provider_attempt("news", "alphavantage", "cooldown", str(neg))
         else:
-            logger.info("📰 [RAG 检索] 正在调用 Alpha Vantage 获取最新新闻...")
-            url = f"https://www.alphavantage.co/query?function=NEWS_SENTIMENT&sort=LATEST&limit=3&apikey={self.av_key}"
-            try:
-                response = retry_call(lambda: requests.get(url, timeout=10), attempts=3, min_wait=0.5, max_wait=4.0)
-                data = response.json()
-                if "feed" not in data:
-                    self._trace_provider_attempt("news", "alphavantage", "success", "empty_feed")
-                    self._finish_provider_trace("news", "alphavantage", "fresh", "empty_feed")
-                    return "今日暂无重大宏观新闻发布。"
-                news_items = [f"标题: {item.get('title', '')}\n摘要: {item.get('summary', '')}" for item in data["feed"]]
-                result = "\n\n".join(news_items)
-                self.cache.set("news", result, ttl_seconds=self._cache_ttl_for_news())
-                self._trace_provider_attempt("news", "alphavantage", "success", "fresh_fetch")
-                self._finish_provider_trace("news", "alphavantage", "fresh", "fresh_fetch")
-                emit_event("data.news", "INFO", "ok", "fetched", {"provider": "alphavantage"})
-                return result
-            except Exception as e:
-                failure_type = classify_exception(e)
-                self._trace_provider_attempt("news", "alphavantage", "failed", str(e), failure_type=failure_type)
-                self._activate_provider_cooldown("news", "alphavantage", failure_type, str(e))
-                emit_event("data.news", "ERROR", failure_type, str(e), {"provider": "alphavantage"})
+            if not self._consume_provider_budget("news", "alphavantage"):
+                logger.warning("📰 [RAG 检索] Alpha Vantage 新闻日预算已耗尽，先跳过本轮请求。")
+            else:
+                logger.info("📰 [RAG 检索] 正在调用 Alpha Vantage 获取最新新闻...")
+                url = f"https://www.alphavantage.co/query?function=NEWS_SENTIMENT&sort=LATEST&limit=3&apikey={self.av_key}"
+                try:
+                    response = retry_call(lambda: requests.get(url, timeout=10), attempts=3, min_wait=0.5, max_wait=4.0)
+                    data = response.json()
+                    if "feed" not in data:
+                        self._trace_provider_attempt("news", "alphavantage", "success", "empty_feed")
+                        self._finish_provider_trace("news", "alphavantage", "fresh", "empty_feed")
+                        return "今日暂无重大宏观新闻发布。"
+                    news_items = [f"标题: {item.get('title', '')}\n摘要: {item.get('summary', '')}" for item in data["feed"]]
+                    result = "\n\n".join(news_items)
+                    self.cache.set("news", result, ttl_seconds=self._cache_ttl_for_news())
+                    self._trace_provider_attempt("news", "alphavantage", "success", "fresh_fetch")
+                    self._finish_provider_trace("news", "alphavantage", "fresh", "fresh_fetch")
+                    emit_event("data.news", "INFO", "ok", "fetched", {"provider": "alphavantage"})
+                    return result
+                except Exception as e:
+                    failure_type = classify_exception(e)
+                    self._trace_provider_attempt("news", "alphavantage", "failed", str(e), failure_type=failure_type)
+                    self._activate_provider_cooldown("news", "alphavantage", failure_type, str(e))
+                    emit_event("data.news", "ERROR", failure_type, str(e), {"provider": "alphavantage"})
 
         stale = self._fallback_to_stale("news", "📰 [RAG 检索] 新闻请求失败，回退到最近一次成功的缓存。")
         if stale is not None:
@@ -492,54 +597,60 @@ class RAGRetriever:
                 logger.warning(f"📊 [RAG 检索] Alpha Vantage 市场源仍在冷却中，先跳过: {neg}")
                 self._trace_provider_attempt("market", "alphavantage", "cooldown", str(neg))
             else:
-                logger.info("📊 [RAG 检索] 优先通过 Alpha Vantage 获取科技股日线数据...")
-                try:
-                    result = self._fetch_market_data_from_alpha_vantage()
-                    self.cache.set(cache_key, result, ttl_seconds=self._cache_ttl_for_market())
-                    self._trace_provider_attempt("market", "alphavantage", "success", "fresh_fetch")
-                    self._finish_provider_trace("market", "alphavantage", "fresh", "fresh_fetch")
-                    emit_event("data.market", "INFO", "ok", "fetched", {"provider": "alphavantage"})
-                    return result
-                except Exception as e:
-                    failure_type = classify_exception(e)
-                    logger.warning(f"⚠️ Alpha Vantage 市场数据获取失败，将回退到 yfinance: {e}")
-                    self._trace_provider_attempt("market", "alphavantage", "failed", str(e), failure_type=failure_type)
-                    self._activate_provider_cooldown("market", "alphavantage", failure_type, str(e))
-                    emit_event("data.market", "ERROR", failure_type, str(e), {"provider": "alphavantage"})
+                if not self._consume_provider_budget("market", "alphavantage"):
+                    logger.warning("📊 [RAG 检索] Alpha Vantage 市场日预算已耗尽，先跳过本轮请求。")
+                else:
+                    logger.info("📊 [RAG 检索] 优先通过 Alpha Vantage 获取科技股日线数据...")
+                    try:
+                        result = self._fetch_market_data_from_alpha_vantage()
+                        self.cache.set(cache_key, result, ttl_seconds=self._cache_ttl_for_market())
+                        self._trace_provider_attempt("market", "alphavantage", "success", "fresh_fetch")
+                        self._finish_provider_trace("market", "alphavantage", "fresh", "fresh_fetch")
+                        emit_event("data.market", "INFO", "ok", "fetched", {"provider": "alphavantage"})
+                        return result
+                    except Exception as e:
+                        failure_type = classify_exception(e)
+                        logger.warning(f"⚠️ Alpha Vantage 市场数据获取失败，将回退到 yfinance: {e}")
+                        self._trace_provider_attempt("market", "alphavantage", "failed", str(e), failure_type=failure_type)
+                        self._activate_provider_cooldown("market", "alphavantage", failure_type, str(e))
+                        emit_event("data.market", "ERROR", failure_type, str(e), {"provider": "alphavantage"})
 
         neg = self._provider_cooldown_reason("market", "yfinance")
         if neg:
             logger.warning(f"📊 [RAG 检索] yfinance 市场源仍在冷却中，先跳过: {neg}")
             self._trace_provider_attempt("market", "yfinance", "cooldown", str(neg))
         else:
-            logger.info("📊 [RAG 检索] 正在通过 yfinance 获取科技巨头最新的量价数据...")
-            market_context = []
-            current_prices = {}
-            
-            try:
-                data = retry_call(lambda: yf.download(TECH_UNIVERSE, period="1mo", progress=False)["Close"], attempts=2, min_wait=0.5, max_wait=3.0)
-                for ticker in TECH_UNIVERSE:
-                    start_price = float(data[ticker].iloc[0])
-                    current_price = float(data[ticker].iloc[-1])
-                    return_rate = ((current_price - start_price) / start_price) * 100
-                    current_prices[ticker] = current_price
-                    market_context.append(f"- {ticker}: 当前价格 ${current_price:.2f}, 近一个月涨跌幅 {return_rate:+.2f}%")
+            if not self._consume_provider_budget("market", "yfinance"):
+                logger.warning("📊 [RAG 检索] yfinance 市场日预算已耗尽，先跳过本轮请求。")
+            else:
+                logger.info("📊 [RAG 检索] 正在通过 yfinance 获取科技巨头最新的量价数据...")
+                market_context = []
+                current_prices = {}
                 
-                result = {
-                    "context_string": "\n".join(market_context),
-                    "prices": current_prices
-                }
-                self.cache.set(cache_key, result, ttl_seconds=self._cache_ttl_for_market())
-                self._trace_provider_attempt("market", "yfinance", "success", "fresh_fetch")
-                self._finish_provider_trace("market", "yfinance", "fresh", "fresh_fetch")
-                emit_event("data.market", "INFO", "ok", "fetched", {"provider": "yfinance"})
-                return result
-            except Exception as e:
-                failure_type = classify_exception(e)
-                logger.warning(f"⚠️ 市场数据获取失败 (可能是 API 限制): {e}")
-                self._trace_provider_attempt("market", "yfinance", "failed", str(e), failure_type=failure_type)
-                self._activate_provider_cooldown("market", "yfinance", failure_type, str(e))
-                emit_event("data.market", "ERROR", failure_type, str(e), {"provider": "yfinance"})
+                try:
+                    data = retry_call(lambda: yf.download(TECH_UNIVERSE, period="1mo", progress=False)["Close"], attempts=2, min_wait=0.5, max_wait=3.0)
+                    for ticker in TECH_UNIVERSE:
+                        start_price = float(data[ticker].iloc[0])
+                        current_price = float(data[ticker].iloc[-1])
+                        return_rate = ((current_price - start_price) / start_price) * 100
+                        current_prices[ticker] = current_price
+                        market_context.append(f"- {ticker}: 当前价格 ${current_price:.2f}, 近一个月涨跌幅 {return_rate:+.2f}%")
+                    
+                    result = {
+                        "context_string": "\n".join(market_context),
+                        "prices": current_prices
+                    }
+                    self.cache.set(cache_key, result, ttl_seconds=self._cache_ttl_for_market())
+                    self._trace_provider_attempt("market", "yfinance", "success", "fresh_fetch")
+                    self._finish_provider_trace("market", "yfinance", "fresh", "fresh_fetch")
+                    emit_event("data.market", "INFO", "ok", "fetched", {"provider": "yfinance"})
+                    return result
+                except Exception as e:
+                    failure_type = classify_exception(e)
+                    logger.warning(f"⚠️ 市场数据获取失败 (可能是 API 限制): {e}")
+                    self._trace_provider_attempt("market", "yfinance", "failed", str(e), failure_type=failure_type)
+                    self._activate_provider_cooldown("market", "yfinance", failure_type, str(e))
+                    emit_event("data.market", "ERROR", failure_type, str(e), {"provider": "yfinance"})
 
         stale = self._fallback_to_stale(cache_key, "📊 [RAG 检索] 市场数据请求失败，回退到最近一次成功的市场缓存。")
         if stale is not None:
@@ -615,48 +726,54 @@ class RAGRetriever:
             logger.warning(f"🌍 [RAG 检索] FRED 宏观源仍在冷却中，先跳过: {neg}")
             self._trace_provider_attempt("macro", "fred", "cooldown", str(neg))
         else:
-            logger.info("🌍 [RAG 检索] 优先通过 FRED 获取宏观经济指标...")
-            try:
-                macro_info = self._fetch_macro_data_from_fred()
-                self.cache.set(cache_key, macro_info, ttl_seconds=self._cache_ttl_for_macro())
-                self._trace_provider_attempt("macro", "fred", "success", "fresh_fetch")
-                self._finish_provider_trace("macro", "fred", "fresh", "fresh_fetch")
-                emit_event("data.macro", "INFO", "ok", "fetched", {"provider": "fred"})
-                return macro_info
-            except Exception as e:
-                failure_type = classify_exception(e)
-                logger.warning(f"⚠️ FRED 宏观数据获取失败，将回退到 yfinance: {e}")
-                self._trace_provider_attempt("macro", "fred", "failed", str(e), failure_type=failure_type)
-                self._activate_provider_cooldown("macro", "fred", failure_type, str(e))
-                emit_event("data.macro", "ERROR", failure_type, str(e), {"provider": "fred"})
+            if not self._consume_provider_budget("macro", "fred"):
+                logger.warning("🌍 [RAG 检索] FRED 宏观日预算已耗尽，先跳过本轮请求。")
+            else:
+                logger.info("🌍 [RAG 检索] 优先通过 FRED 获取宏观经济指标...")
+                try:
+                    macro_info = self._fetch_macro_data_from_fred()
+                    self.cache.set(cache_key, macro_info, ttl_seconds=self._cache_ttl_for_macro())
+                    self._trace_provider_attempt("macro", "fred", "success", "fresh_fetch")
+                    self._finish_provider_trace("macro", "fred", "fresh", "fresh_fetch")
+                    emit_event("data.macro", "INFO", "ok", "fetched", {"provider": "fred"})
+                    return macro_info
+                except Exception as e:
+                    failure_type = classify_exception(e)
+                    logger.warning(f"⚠️ FRED 宏观数据获取失败，将回退到 yfinance: {e}")
+                    self._trace_provider_attempt("macro", "fred", "failed", str(e), failure_type=failure_type)
+                    self._activate_provider_cooldown("macro", "fred", failure_type, str(e))
+                    emit_event("data.macro", "ERROR", failure_type, str(e), {"provider": "fred"})
 
         neg = self._provider_cooldown_reason("macro", "yfinance")
         if neg:
             logger.warning(f"🌍 [RAG 检索] yfinance 宏观源仍在冷却中，先跳过: {neg}")
             self._trace_provider_attempt("macro", "yfinance", "cooldown", str(neg))
         else:
-            logger.info("🌍 [RAG 检索] 正在获取宏观经济指标 (VIX恐慌指数, 10年期美债收益率)...")
-            try:
-                tickers = ["^VIX", "^TNX"]
-                data = retry_call(lambda: yf.download(tickers, period="5d", progress=False)["Close"], attempts=2, min_wait=0.5, max_wait=3.0)
-                vix_latest = float(data["^VIX"].iloc[-1])
-                tnx_latest = float(data["^TNX"].iloc[-1])
-                
-                macro_info = (
-                    f"- VIX 恐慌指数: {vix_latest:.2f} (注: >30代表恐慌，<20代表贪婪/平稳)\n"
-                    f"- 10年期美债收益率: {tnx_latest:.2f}% (注: 收益率飙升通常利空科技股估值)"
-                )
-                self.cache.set(cache_key, macro_info, ttl_seconds=self._cache_ttl_for_macro())
-                self._trace_provider_attempt("macro", "yfinance", "success", "fresh_fetch")
-                self._finish_provider_trace("macro", "yfinance", "fresh", "fresh_fetch")
-                emit_event("data.macro", "INFO", "ok", "fetched", {"provider": "yfinance"})
-                return macro_info
-            except Exception as e:
-                failure_type = classify_exception(e)
-                logger.warning(f"⚠️ 宏观数据获取失败: {e}")
-                self._trace_provider_attempt("macro", "yfinance", "failed", str(e), failure_type=failure_type)
-                self._activate_provider_cooldown("macro", "yfinance", failure_type, str(e))
-                emit_event("data.macro", "ERROR", failure_type, str(e), {"provider": "yfinance"})
+            if not self._consume_provider_budget("macro", "yfinance"):
+                logger.warning("🌍 [RAG 检索] yfinance 宏观日预算已耗尽，先跳过本轮请求。")
+            else:
+                logger.info("🌍 [RAG 检索] 正在获取宏观经济指标 (VIX恐慌指数, 10年期美债收益率)...")
+                try:
+                    tickers = ["^VIX", "^TNX"]
+                    data = retry_call(lambda: yf.download(tickers, period="5d", progress=False)["Close"], attempts=2, min_wait=0.5, max_wait=3.0)
+                    vix_latest = float(data["^VIX"].iloc[-1])
+                    tnx_latest = float(data["^TNX"].iloc[-1])
+                    
+                    macro_info = (
+                        f"- VIX 恐慌指数: {vix_latest:.2f} (注: >30代表恐慌，<20代表贪婪/平稳)\n"
+                        f"- 10年期美债收益率: {tnx_latest:.2f}% (注: 收益率飙升通常利空科技股估值)"
+                    )
+                    self.cache.set(cache_key, macro_info, ttl_seconds=self._cache_ttl_for_macro())
+                    self._trace_provider_attempt("macro", "yfinance", "success", "fresh_fetch")
+                    self._finish_provider_trace("macro", "yfinance", "fresh", "fresh_fetch")
+                    emit_event("data.macro", "INFO", "ok", "fetched", {"provider": "yfinance"})
+                    return macro_info
+                except Exception as e:
+                    failure_type = classify_exception(e)
+                    logger.warning(f"⚠️ 宏观数据获取失败: {e}")
+                    self._trace_provider_attempt("macro", "yfinance", "failed", str(e), failure_type=failure_type)
+                    self._activate_provider_cooldown("macro", "yfinance", failure_type, str(e))
+                    emit_event("data.macro", "ERROR", failure_type, str(e), {"provider": "yfinance"})
 
         stale = self._fallback_to_stale(cache_key, "🌍 [RAG 检索] 宏观请求失败，回退到最近一次成功的宏观缓存。")
         if stale is not None:
@@ -697,55 +814,61 @@ class RAGRetriever:
                 logger.warning(f"🏢 [RAG 检索] Alpha Vantage 基本面源仍在冷却中，先跳过: {neg}")
                 self._trace_provider_attempt("fundamental", "alphavantage", "cooldown", str(neg))
             else:
-                logger.info("🏢 [RAG 检索] 优先通过 Alpha Vantage 获取科技股基本面数据...")
-                try:
-                    result = self._fetch_fundamental_data_from_alpha_vantage()
-                    self.cache.set("fundamental_data_v2", result, ttl_seconds=self._cache_ttl_for_fundamental())
-                    self._trace_provider_attempt("fundamental", "alphavantage", "success", "fresh_fetch")
-                    self._finish_provider_trace("fundamental", "alphavantage", "fresh", "fresh_fetch")
-                    emit_event("data.fundamental", "INFO", "ok", "fetched", {"provider": "alphavantage"})
-                    return result
-                except Exception as e:
-                    failure_type = classify_exception(e)
-                    logger.warning(f"⚠️ Alpha Vantage 基本面获取失败，将回退到 yfinance: {e}")
-                    self._trace_provider_attempt("fundamental", "alphavantage", "failed", str(e), failure_type=failure_type)
-                    self._activate_provider_cooldown("fundamental", "alphavantage", failure_type, str(e))
-                    emit_event("data.fundamental", "ERROR", failure_type, str(e), {"provider": "alphavantage"})
+                if not self._consume_provider_budget("fundamental", "alphavantage"):
+                    logger.warning("🏢 [RAG 检索] Alpha Vantage 基本面日预算已耗尽，先跳过本轮请求。")
+                else:
+                    logger.info("🏢 [RAG 检索] 优先通过 Alpha Vantage 获取科技股基本面数据...")
+                    try:
+                        result = self._fetch_fundamental_data_from_alpha_vantage()
+                        self.cache.set("fundamental_data_v2", result, ttl_seconds=self._cache_ttl_for_fundamental())
+                        self._trace_provider_attempt("fundamental", "alphavantage", "success", "fresh_fetch")
+                        self._finish_provider_trace("fundamental", "alphavantage", "fresh", "fresh_fetch")
+                        emit_event("data.fundamental", "INFO", "ok", "fetched", {"provider": "alphavantage"})
+                        return result
+                    except Exception as e:
+                        failure_type = classify_exception(e)
+                        logger.warning(f"⚠️ Alpha Vantage 基本面获取失败，将回退到 yfinance: {e}")
+                        self._trace_provider_attempt("fundamental", "alphavantage", "failed", str(e), failure_type=failure_type)
+                        self._activate_provider_cooldown("fundamental", "alphavantage", failure_type, str(e))
+                        emit_event("data.fundamental", "ERROR", failure_type, str(e), {"provider": "alphavantage"})
 
         neg = self._provider_cooldown_reason("fundamental", "yfinance")
         if neg:
             logger.warning(f"🏢 [RAG 检索] yfinance 基本面源仍在冷却中，先跳过: {neg}")
             self._trace_provider_attempt("fundamental", "yfinance", "cooldown", str(neg))
         else:
-            logger.info("🏢 [RAG 检索] 正在通过 yfinance 获取科技巨头最新基本面数据...")
-            fundamental_context = []
-            try:
-                earnings_agent = EarningsResearchAgent(days_window=21)
-                for ticker in TECH_UNIVERSE:
-                    stock = yf.Ticker(ticker)
-                    info = retry_call(lambda: stock.info, attempts=2, min_wait=0.5, max_wait=3.0)
-                    pe_ratio = info.get('trailingPE', 'N/A')
-                    forward_pe = info.get('forwardPE', 'N/A')
-                    recommendation = info.get('recommendationKey', 'N/A')
-                    fundamental_context.append(f"- {ticker}: 当前市盈率(PE) {pe_ratio}, 预期市盈率(Forward PE) {forward_pe}, 华尔街综合评级: {recommendation}")
+            if not self._consume_provider_budget("fundamental", "yfinance"):
+                logger.warning("🏢 [RAG 检索] yfinance 基本面日预算已耗尽，先跳过本轮请求。")
+            else:
+                logger.info("🏢 [RAG 检索] 正在通过 yfinance 获取科技巨头最新基本面数据...")
+                fundamental_context = []
+                try:
+                    earnings_agent = EarningsResearchAgent(days_window=21)
+                    for ticker in TECH_UNIVERSE:
+                        stock = yf.Ticker(ticker)
+                        info = retry_call(lambda: stock.info, attempts=2, min_wait=0.5, max_wait=3.0)
+                        pe_ratio = info.get('trailingPE', 'N/A')
+                        forward_pe = info.get('forwardPE', 'N/A')
+                        recommendation = info.get('recommendationKey', 'N/A')
+                        fundamental_context.append(f"- {ticker}: 当前市盈率(PE) {pe_ratio}, 预期市盈率(Forward PE) {forward_pe}, 华尔街综合评级: {recommendation}")
 
-                    try:
-                        fundamental_context.append(earnings_agent.summarize(ticker, stock, info))
-                    except Exception as e:
-                        logger.warning(f"⚠️ 财报研究生成失败: {ticker} {e}")
-                
-                result = "\n".join(fundamental_context)
-                self.cache.set("fundamental_data_v2", result, ttl_seconds=self._cache_ttl_for_fundamental())
-                self._trace_provider_attempt("fundamental", "yfinance", "success", "fresh_fetch")
-                self._finish_provider_trace("fundamental", "yfinance", "fresh", "fresh_fetch")
-                emit_event("data.fundamental", "INFO", "ok", "fetched", {"provider": "yfinance"})
-                return result
-            except Exception as e:
-                failure_type = classify_exception(e)
-                logger.warning(f"⚠️ 基本面数据获取失败: {e}")
-                self._trace_provider_attempt("fundamental", "yfinance", "failed", str(e), failure_type=failure_type)
-                self._activate_provider_cooldown("fundamental", "yfinance", failure_type, str(e))
-                emit_event("data.fundamental", "ERROR", failure_type, str(e), {"provider": "yfinance"})
+                        try:
+                            fundamental_context.append(earnings_agent.summarize(ticker, stock, info))
+                        except Exception as e:
+                            logger.warning(f"⚠️ 财报研究生成失败: {ticker} {e}")
+                    
+                    result = "\n".join(fundamental_context)
+                    self.cache.set("fundamental_data_v2", result, ttl_seconds=self._cache_ttl_for_fundamental())
+                    self._trace_provider_attempt("fundamental", "yfinance", "success", "fresh_fetch")
+                    self._finish_provider_trace("fundamental", "yfinance", "fresh", "fresh_fetch")
+                    emit_event("data.fundamental", "INFO", "ok", "fetched", {"provider": "yfinance"})
+                    return result
+                except Exception as e:
+                    failure_type = classify_exception(e)
+                    logger.warning(f"⚠️ 基本面数据获取失败: {e}")
+                    self._trace_provider_attempt("fundamental", "yfinance", "failed", str(e), failure_type=failure_type)
+                    self._activate_provider_cooldown("fundamental", "yfinance", failure_type, str(e))
+                    emit_event("data.fundamental", "ERROR", failure_type, str(e), {"provider": "yfinance"})
 
         stale = self._fallback_to_stale("fundamental_data_v2", "🏢 [RAG 检索] 基本面请求失败，回退到最近一次成功的基本面缓存。")
         if stale is not None:

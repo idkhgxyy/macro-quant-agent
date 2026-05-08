@@ -141,6 +141,44 @@ class RetrieverProviderTests(unittest.TestCase):
         self.assertEqual(status.get("detail"), "before_daily_refresh_window")
         self.assertEqual(status.get("age_seconds"), 100.0)
 
+    def test_fetch_news_skips_provider_when_daily_budget_is_exhausted(self):
+        with patch("data.cache.time.time", return_value=1000):
+            self.retriever.cache.set("news", "budget stale news", ttl_seconds=1)
+            self.retriever.cache.set(
+                "budget_news_alphavantage",
+                {"window": "daily", "used": 12, "limit": 12, "cost": 1, "provider": "alphavantage"},
+            )
+
+        with patch("data.cache.time.time", return_value=1100):
+            with patch.object(self.retriever, "_is_ready_for_daily_refresh", return_value=True):
+                with patch("data.retriever.requests.get", side_effect=AssertionError("should not call Alpha Vantage")):
+                    text = self.retriever.fetch_news()
+
+        self.assertEqual(text, "budget stale news")
+        status = self.retriever.get_provider_status().get("news", {})
+        self.assertEqual(status.get("selected_provider"), "stale_cache")
+        self.assertEqual(status.get("budget_provider"), "alphavantage")
+        self.assertEqual(status.get("budget_state"), "exhausted")
+        self.assertEqual(status.get("budget_used"), 12)
+        self.assertTrue(any(x.get("provider") == "alphavantage" and x.get("outcome") == "budget_skip" for x in status.get("attempts", [])))
+
+    def test_fetch_market_data_exposes_budget_state_on_success(self):
+        result_payload = {"context_string": "fresh market", "prices": {"AAPL": 111.0}}
+
+        with patch("data.cache.time.time", return_value=1200):
+            with patch.object(self.retriever, "_fetch_market_data_from_alpha_vantage", return_value=result_payload):
+                result = self.retriever.fetch_market_data()
+
+        self.assertEqual(result["context_string"], "fresh market")
+        status = self.retriever.get_provider_status().get("market", {})
+        self.assertEqual(status.get("selected_provider"), "alphavantage")
+        self.assertEqual(status.get("budget_provider"), "alphavantage")
+        self.assertEqual(status.get("budget_limit"), 36)
+        self.assertEqual(status.get("budget_cost"), len(TECH_UNIVERSE))
+        self.assertEqual(status.get("budget_used"), len(TECH_UNIVERSE))
+        self.assertEqual(status.get("budget_remaining"), 36 - len(TECH_UNIVERSE))
+        self.assertEqual(status.get("budget_state"), "ok")
+
     def test_fetch_fundamental_data_reuses_stale_before_weekly_refresh_window(self):
         with patch("data.cache.time.time", return_value=1000):
             self.retriever.cache.set("fundamental_data_v2", "stale fundamentals", ttl_seconds=1)

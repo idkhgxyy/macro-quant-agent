@@ -318,8 +318,11 @@ async function refresh() {
       : "—";
     const tagClass = item.mode === "degraded" ? "bad" : item.mode === "stale_cache" ? "warn" : "good";
     const ageText = Number.isFinite(Number(item.age_seconds)) ? fmtAge(item.age_seconds) : "—";
+    const budgetText = Number.isFinite(Number(item.budget_limit))
+      ? `${item.budget_state || "ok"} ${item.budget_used || 0}/${item.budget_limit}`
+      : "—";
     runtimeHighlights.push(
-      `<div class="item"><div class="row"><span class="tag ${tagClass}">${escapeHtml(kind)}</span></div><div class="msg">provider=${escapeHtml(item.selected_provider || "—")} mode=${escapeHtml(item.mode || "—")} age=${escapeHtml(ageText)}</div><div class="meta">detail=${escapeHtml(item.detail || "—")} attempts=${escapeHtml(attemptText)}</div></div>`
+      `<div class="item"><div class="row"><span class="tag ${tagClass}">${escapeHtml(kind)}</span></div><div class="msg">provider=${escapeHtml(item.selected_provider || "—")} mode=${escapeHtml(item.mode || "—")} age=${escapeHtml(ageText)}</div><div class="meta">detail=${escapeHtml(item.detail || "—")} budget=${escapeHtml(budgetText)} attempts=${escapeHtml(attemptText)}</div></div>`
     );
   });
   if (killSwitch?.recovery_hint) {
