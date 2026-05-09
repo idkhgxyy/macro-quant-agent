@@ -4,6 +4,7 @@ from ib_insync import IB, Stock, MarketOrder, Trade
 from utils.logger import setup_logger
 logger = setup_logger(__name__)
 from utils.events import emit_event, classify_exception
+from utils.heartbeat import utc_now_z
 from config import ALLOW_OUTSIDE_RTH
 
 from config import TECH_UNIVERSE
@@ -47,6 +48,56 @@ class IBKRBroker(BaseBroker):
         if self.ib.isConnected():
             self.ib.disconnect()
             logger.info("🔌 已断开与 IBKR 的连接。")
+
+    def _trade_commission(self, trade: Trade) -> float:
+        total = 0.0
+        for fill in getattr(trade, "fills", []) or []:
+            report = getattr(fill, "commissionReport", None)
+            if report is None:
+                continue
+            try:
+                commission = float(getattr(report, "commission", None))
+            except Exception:
+                commission = None
+            if commission is None:
+                continue
+            total += commission
+        return total
+
+    def _status_detail(self, status: str, filled: float, requested: float, *, timeout_cancel_requested: bool) -> str:
+        normalized = str(status or "").strip().lower()
+        requested_val = max(float(requested or 0.0), 0.0)
+        filled_val = max(float(filled or 0.0), 0.0)
+        if normalized == "filled":
+            return "filled_complete"
+        if normalized in {"cancelled", "apicancelled"}:
+            if timeout_cancel_requested and filled_val > 0:
+                return "timeout_partial_then_cancelled"
+            if timeout_cancel_requested:
+                return "timeout_cancelled"
+            if filled_val > 0:
+                return "partial_then_cancelled"
+            return "cancelled_before_fill"
+        if normalized == "inactive":
+            if filled_val > 0:
+                return "partial_then_inactive"
+            return "inactive_rejected"
+        if requested_val > 0 and 0 < filled_val < requested_val:
+            return "partial_open"
+        if requested_val > 0 and filled_val <= 0:
+            return "submitted_no_fill"
+        return normalized or "unknown"
+
+    def _record_status(self, rec: dict, status: str):
+        history = rec.get("status_history")
+        if not isinstance(history, list):
+            history = []
+        now = utc_now_z()
+        last_status = history[-1]["status"] if history and isinstance(history[-1], dict) else None
+        if str(last_status or "") == str(status or ""):
+            return
+        history.append({"status": str(status or "unknown"), "ts": now})
+        rec["status_history"] = history
 
     def get_account_summary(self) -> tuple:
         self._connect()
@@ -116,23 +167,35 @@ class IBKRBroker(BaseBroker):
                 
                 logger.info(f"  -> 📤 发送订单: {action} {shares} 股 {ticker} ...")
                 trade = self.ib.placeOrder(contract, order)
+                submitted_at = utc_now_z()
                 record = {
                     "ticker": ticker,
                     "action": action,
                     "requested": shares,
                     "filled": 0.0,
                     "avg_fill_price": 0.0,
+                    "commission": 0.0,
                     "status": trade.orderStatus.status,
+                    "submitted_at": submitted_at,
+                    "completed_at": None,
+                    "elapsed_sec": None,
+                    "timeout_cancel_requested": False,
+                    "status_detail": None,
+                    "status_history": [{"status": str(trade.orderStatus.status or "unknown"), "ts": submitted_at}],
                     "order_id": trade.order.orderId,
                 }
                 trade_records.append((trade, record))
+                submitted_mono = time.perf_counter()
 
                 def _on_status_update(t: Trade, rec: dict):
                     rec["status"] = t.orderStatus.status
                     rec["filled"] = float(t.orderStatus.filled or 0.0)
                     rec["avg_fill_price"] = float(t.orderStatus.avgFillPrice or 0.0)
+                    rec["commission"] = self._trade_commission(t)
+                    self._record_status(rec, t.orderStatus.status)
 
                 trade.statusEvent += lambda t, rec=record: _on_status_update(t, rec)
+                record["_submitted_mono"] = submitted_mono
             
             if not trade_records:
                 logger.info("🏦 [IBKR 券商端] 订单列表为空（shares 均为 0），无需提交。")
@@ -155,6 +218,7 @@ class IBKRBroker(BaseBroker):
             for trade, rec in trade_records:
                 if trade.orderStatus.status not in terminal_statuses:
                     still_open.append(rec)
+                    rec["timeout_cancel_requested"] = True
                     try:
                         self.ib.cancelOrder(trade.order)
                     except Exception:
@@ -173,6 +237,18 @@ class IBKRBroker(BaseBroker):
                 rec["status"] = status
                 rec["filled"] = filled
                 rec["avg_fill_price"] = avg_fill_price
+                rec["commission"] = self._trade_commission(trade)
+                self._record_status(rec, status)
+                submitted_mono = rec.pop("_submitted_mono", None)
+                if submitted_mono is not None:
+                    rec["elapsed_sec"] = round(max(time.perf_counter() - submitted_mono, 0.0), 6)
+                rec["completed_at"] = utc_now_z()
+                rec["status_detail"] = self._status_detail(
+                    status,
+                    filled,
+                    rec.get("requested"),
+                    timeout_cancel_requested=bool(rec.get("timeout_cancel_requested")),
+                )
 
                 if status == "Filled":
                     logger.info(f"  ✅ [IBKR 成交] {rec['action']} {rec['filled']} 股 {rec['ticker']} @ {rec['avg_fill_price']:.2f}")
@@ -219,23 +295,50 @@ class MockBroker(BaseBroker):
             import random
             if random.random() < 0.1:  # 10% 概率拒单
                 logger.warning(f"  ❌ [券商拒单] 订单 {action} {shares} 股 {ticker} 失败 (模拟网络异常/资金不足)！")
-                records.append({"ticker": ticker, "action": action, "requested": shares, "filled": 0, "avg_fill_price": 0.0, "status": "Rejected", "order_id": None})
+                records.append({
+                    "ticker": ticker, "action": action, "requested": shares, "filled": 0, "avg_fill_price": 0.0,
+                    "commission": 0.0, "status": "Rejected", "status_detail": "mock_rejected",
+                    "submitted_at": utc_now_z(), "completed_at": utc_now_z(), "elapsed_sec": 0.0,
+                    "timeout_cancel_requested": False, "status_history": [{"status": "Rejected", "ts": utc_now_z()}],
+                    "order_id": None,
+                })
                 continue
                 
             if action == "SELL":
                 self.server_positions[ticker] -= shares
                 self.server_cash += trade_amount
                 logger.info(f"  ✅ [券商成交] 成功卖出 {shares} 股 {ticker} @ ${price:.2f}")
-                records.append({"ticker": ticker, "action": action, "requested": shares, "filled": shares, "avg_fill_price": float(price), "status": "Filled", "order_id": None})
+                ts = utc_now_z()
+                records.append({
+                    "ticker": ticker, "action": action, "requested": shares, "filled": shares, "avg_fill_price": float(price),
+                    "commission": 0.0, "status": "Filled", "status_detail": "mock_filled",
+                    "submitted_at": ts, "completed_at": ts, "elapsed_sec": 0.0,
+                    "timeout_cancel_requested": False, "status_history": [{"status": "Filled", "ts": ts}],
+                    "order_id": None,
+                })
             elif action == "BUY":
                 if self.server_cash >= trade_amount:
                     self.server_positions[ticker] += shares
                     self.server_cash -= trade_amount
                     logger.info(f"  ✅ [券商成交] 成功买入 {shares} 股 {ticker} @ ${price:.2f}")
-                    records.append({"ticker": ticker, "action": action, "requested": shares, "filled": shares, "avg_fill_price": float(price), "status": "Filled", "order_id": None})
+                    ts = utc_now_z()
+                    records.append({
+                        "ticker": ticker, "action": action, "requested": shares, "filled": shares, "avg_fill_price": float(price),
+                        "commission": 0.0, "status": "Filled", "status_detail": "mock_filled",
+                        "submitted_at": ts, "completed_at": ts, "elapsed_sec": 0.0,
+                        "timeout_cancel_requested": False, "status_history": [{"status": "Filled", "ts": ts}],
+                        "order_id": None,
+                    })
                 else:
                     logger.warning(f"  ❌ [券商拒单] 资金不足！拒绝买入 {ticker}。")
-                    records.append({"ticker": ticker, "action": action, "requested": shares, "filled": 0, "avg_fill_price": 0.0, "status": "Rejected", "order_id": None})
+                    ts = utc_now_z()
+                    records.append({
+                        "ticker": ticker, "action": action, "requested": shares, "filled": 0, "avg_fill_price": 0.0,
+                        "commission": 0.0, "status": "Rejected", "status_detail": "mock_rejected",
+                        "submitted_at": ts, "completed_at": ts, "elapsed_sec": 0.0,
+                        "timeout_cancel_requested": False, "status_history": [{"status": "Rejected", "ts": ts}],
+                        "order_id": None,
+                    })
                     
         logger.info("🏦 [Broker 券商端] 今日所有订单处理完毕。")
         return records

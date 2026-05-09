@@ -1,4 +1,6 @@
 const DASHBOARD_TOKEN = new URLSearchParams(window.location.search).get("token") || "";
+let selectedDate = new URLSearchParams(window.location.search).get("date") || "";
+let compareDate = new URLSearchParams(window.location.search).get("compare") || "";
 
 const fmtMoney = (v) => {
   if (v === null || v === undefined) return "—";
@@ -54,14 +56,14 @@ const budgetClass = (state) => {
   return "";
 };
 
-async function jget(path) {
-  const r = await fetch(withToken(path), { cache: "no-store", headers: authHeaders() });
+async function jget(path, params = {}) {
+  const r = await fetch(withToken(withParams(path, params)), { cache: "no-store", headers: authHeaders() });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
 
-async function tget(path) {
-  const r = await fetch(withToken(path), { cache: "no-store", headers: authHeaders() });
+async function tget(path, params = {}) {
+  const r = await fetch(withToken(withParams(path, params)), { cache: "no-store", headers: authHeaders() });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.text();
 }
@@ -75,6 +77,294 @@ function withToken(path) {
   const u = new URL(path, window.location.origin);
   if (!u.searchParams.get("token")) u.searchParams.set("token", DASHBOARD_TOKEN);
   return u.pathname + u.search;
+}
+
+function withParams(path, params) {
+  const u = new URL(path, window.location.origin);
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value === null || value === undefined || value === "") return;
+    u.searchParams.set(key, String(value));
+  });
+  return u.pathname + u.search;
+}
+
+function normalizeDates(dateDoc) {
+  const values = new Set([...(dateDoc?.decision || []), ...(dateDoc?.rag || [])]);
+  return Array.from(values).sort().reverse();
+}
+
+function optionHtml(value, label) {
+  return `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`;
+}
+
+function syncDateControls(dates) {
+  const replaySelect = document.getElementById("select-date");
+  const compareSelect = document.getElementById("select-compare-date");
+  replaySelect.innerHTML = optionHtml("", "Latest") + dates.map((date) => optionHtml(date, date)).join("");
+  compareSelect.innerHTML = optionHtml("", "Off") + dates.map((date) => optionHtml(date, date)).join("");
+
+  if (selectedDate && !dates.includes(selectedDate)) {
+    selectedDate = "";
+  }
+  if (compareDate && !dates.includes(compareDate)) {
+    compareDate = "";
+  }
+
+  replaySelect.value = selectedDate;
+  compareSelect.value = compareDate;
+  syncUrlDateParams();
+}
+
+function syncUrlDateParams() {
+  const u = new URL(window.location.href);
+  if (selectedDate) u.searchParams.set("date", selectedDate);
+  else u.searchParams.delete("date");
+  if (compareDate) u.searchParams.set("compare", compareDate);
+  else u.searchParams.delete("compare");
+  window.history.replaceState({}, "", u);
+}
+
+function sortAllocations(allocations, limit = 5) {
+  return Object.entries(allocations || {})
+    .map(([ticker, weight]) => ({ ticker, weight: Number(weight || 0) }))
+    .sort((a, b) => b.weight - a.weight)
+    .slice(0, limit);
+}
+
+function strategyDelta(basePlan, comparePlan) {
+  const base = new Set(Array.isArray(basePlan?.selected_strategies) ? basePlan.selected_strategies : []);
+  const compare = new Set(Array.isArray(comparePlan?.selected_strategies) ? comparePlan.selected_strategies : []);
+  const added = Array.from(base).filter((item) => !compare.has(item)).sort();
+  const removed = Array.from(compare).filter((item) => !base.has(item)).sort();
+  const kept = Array.from(base).filter((item) => compare.has(item)).sort();
+  return { added, removed, kept };
+}
+
+function positionDeltaRows(basePositions, comparePositions) {
+  const tickers = Array.from(new Set([
+    ...Object.keys(basePositions || {}),
+    ...Object.keys(comparePositions || {}),
+  ])).sort();
+  return tickers
+    .map((ticker) => {
+      const compareShares = Number(comparePositions?.[ticker] || 0);
+      const baseShares = Number(basePositions?.[ticker] || 0);
+      return {
+        ticker,
+        compare_shares: compareShares,
+        base_shares: baseShares,
+        delta: baseShares - compareShares,
+      };
+    })
+    .filter((row) => row.compare_shares !== 0 || row.base_shares !== 0);
+}
+
+function renderCompare(compareDecision, compareReview, baseDecision, baseReview) {
+  const summaryEl = document.getElementById("text-compare-summary");
+  const strategyEl = document.getElementById("list-compare-strategies");
+  const positionEl = document.getElementById("table-compare-positions");
+
+  if (!compareDate || !compareDecision?.payload) {
+    summaryEl.textContent = "未启用多日对比。选择 Compare To 日期后，将显示状态、策略与持仓差异。";
+    list(strategyEl, [`<div class="item"><div class="msg">Compare To 关闭时不显示策略差异。</div></div>`]);
+    table(
+      positionEl,
+      [
+        { key: "ticker", label: "Ticker" },
+        { key: "compare_shares", label: "Compare", align: "right" },
+        { key: "base_shares", label: "Current", align: "right" },
+        { key: "delta", label: "Delta", align: "right" },
+      ],
+      []
+    );
+    return;
+  }
+
+  const basePayload = baseDecision?.payload || {};
+  const comparePayload = compareDecision?.payload || {};
+  const basePlan = basePayload.plan || {};
+  const comparePlan = comparePayload.plan || {};
+  const delta = strategyDelta(basePlan, comparePlan);
+  const baseTop = sortAllocations(basePlan.allocations);
+  const compareTop = sortAllocations(comparePlan.allocations);
+  const rows = positionDeltaRows(basePayload.positions_after || {}, comparePayload.positions_after || {});
+
+  summaryEl.textContent = JSON.stringify(
+    {
+      current_date: selectedDate || baseDecision?.date || basePayload?.date || "latest",
+      compare_date: compareDate,
+      status: {
+        current: basePayload.status || null,
+        compare: comparePayload.status || null,
+      },
+      cash_after: {
+        current: basePayload.cash_after ?? null,
+        compare: comparePayload.cash_after ?? null,
+        delta: (Number(basePayload.cash_after || 0) - Number(comparePayload.cash_after || 0)) || 0,
+      },
+      target_cash_ratio: {
+        current: baseReview?.target_cash_ratio ?? null,
+        compare: compareReview?.target_cash_ratio ?? null,
+      },
+      turnover: {
+        current: baseReview?.turnover ?? null,
+        compare: compareReview?.turnover ?? null,
+      },
+      top_allocations_current: baseTop,
+      top_allocations_compare: compareTop,
+    },
+    null,
+    2
+  );
+
+  list(strategyEl, [
+    `<div class="item"><div class="row"><span class="tag good">Added</span></div><div class="msg inline">${delta.added.length ? escapeHtml(delta.added.join(", ")) : "—"}</div></div>`,
+    `<div class="item"><div class="row"><span class="tag warn">Removed</span></div><div class="msg inline">${delta.removed.length ? escapeHtml(delta.removed.join(", ")) : "—"}</div></div>`,
+    `<div class="item"><div class="row"><span class="tag">Kept</span></div><div class="msg inline">${delta.kept.length ? escapeHtml(delta.kept.join(", ")) : "—"}</div></div>`,
+  ]);
+
+  table(
+    positionEl,
+    [
+      { key: "ticker", label: "Ticker" },
+      { key: "compare_shares", label: compareDate, align: "right", render: (v) => Number(v).toLocaleString() },
+      { key: "base_shares", label: selectedDate || "Latest", align: "right", render: (v) => Number(v).toLocaleString() },
+      {
+        key: "delta",
+        label: "Delta",
+        align: "right",
+        render: (v) => `${Number(v) > 0 ? "+" : ""}${Number(v).toLocaleString()}`,
+      },
+    ],
+    rows
+  );
+}
+
+function renderExecutionQuality(review) {
+  const quality = review?.execution_quality || {};
+  const breakdown = quality.normalized_status_breakdown || quality.status_breakdown || {};
+  const items = [
+    {
+      label: "Fill Ratio",
+      value: quality.fill_ratio == null ? "—" : fmtPct(quality.fill_ratio),
+      meta: `requested_shares=${Number(quality.requested_total_shares || 0).toLocaleString()} filled_shares=${Number(quality.filled_total_shares || 0).toLocaleString()} requested_notional=${fmtMoney(quality.requested_notional)} filled_notional=${fmtMoney(quality.filled_notional)}`,
+      tag: quality.fill_ratio != null && quality.fill_ratio >= 0.95 ? "good" : (quality.fill_ratio != null ? "warn" : ""),
+    },
+    {
+      label: "Problem Rate",
+      value: quality.problem_rate == null ? "—" : fmtPct(quality.problem_rate),
+      meta: `cancelled=${quality.cancelled_count ?? 0} rejected=${quality.rejected_count ?? 0} unfilled=${quality.unfilled_count ?? 0}`,
+      tag: (quality.problem_order_count || 0) > 0 ? "warn" : "good",
+    },
+    {
+      label: "Partial Rate",
+      value: quality.partial_rate == null ? "—" : fmtPct(quality.partial_rate),
+      meta: `partial=${quality.partial_count ?? 0} executed=${quality.executed_order_count ?? 0}`,
+      tag: (quality.partial_count || 0) > 0 ? "warn" : "good",
+    },
+    {
+      label: "Est. Slippage",
+      value: quality.estimated_slippage_cost == null ? "—" : fmtMoney(quality.estimated_slippage_cost),
+      meta: `slippage_bps=${quality.estimated_slippage_bps == null ? "—" : quality.estimated_slippage_bps.toFixed(1)} breakdown=${JSON.stringify(breakdown)}`,
+      tag: Number(quality.estimated_slippage_cost || 0) > 0 ? "warn" : "good",
+    },
+    {
+      label: "Commission",
+      value: quality.reported_commission_total == null ? "—" : fmtMoney(quality.reported_commission_total),
+      meta: `commission_bps=${quality.reported_commission_bps == null ? "—" : quality.reported_commission_bps.toFixed(1)} total_cost=${quality.estimated_total_cost == null ? "—" : fmtMoney(quality.estimated_total_cost)}`,
+      tag: Number(quality.reported_commission_total || 0) > 0 ? "warn" : "good",
+    },
+    {
+      label: "Missed Notional",
+      value: quality.missed_notional == null ? "—" : fmtMoney(quality.missed_notional),
+      meta: `fill_notional_ratio=${quality.fill_notional_ratio == null ? "—" : fmtPct(quality.fill_notional_ratio)}`,
+      tag: Number(quality.missed_notional || 0) > 0 ? "warn" : "good",
+    },
+  ];
+
+  list(
+    document.getElementById("list-execution-quality"),
+    items.map((item) => {
+      const tagClassName = item.tag ? ` ${item.tag}` : "";
+      return `<div class="item"><div class="row"><span class="tag${tagClassName}">${escapeHtml(item.label)}</span><span class="msg inline">${escapeHtml(item.value)}</span></div><div class="meta">${escapeHtml(item.meta)}</div></div>`;
+    })
+  );
+}
+
+function renderExecutionLifecycle(review) {
+  const lifecycle = review?.execution_lifecycle || {};
+  const items = [
+    { label: "Filled", value: lifecycle.filled ?? 0, tag: "good" },
+    { label: "Partial", value: lifecycle.partial ?? 0, tag: (lifecycle.partial || 0) > 0 ? "warn" : "good" },
+    { label: "Cancelled", value: lifecycle.cancelled ?? 0, tag: (lifecycle.cancelled || 0) > 0 ? "warn" : "good" },
+    { label: "Rejected", value: lifecycle.rejected ?? 0, tag: (lifecycle.rejected || 0) > 0 ? "bad" : "good" },
+    { label: "Unfilled", value: lifecycle.unfilled ?? 0, tag: (lifecycle.unfilled || 0) > 0 ? "warn" : "good" },
+    {
+      label: "Submitted No Report",
+      value: lifecycle.submitted_no_report ?? 0,
+      tag: (lifecycle.submitted_no_report || 0) > 0 ? "warn" : "good",
+    },
+    {
+      label: "Timeout Cancel",
+      value: lifecycle.timeout_cancel_requested_count ?? 0,
+      tag: (lifecycle.timeout_cancel_requested_count || 0) > 0 ? "warn" : "good",
+    },
+    {
+      label: "Partial Terminal",
+      value: lifecycle.partial_terminal_count ?? 0,
+      tag: (lifecycle.partial_terminal_count || 0) > 0 ? "warn" : "good",
+    },
+  ];
+
+  const total = lifecycle.total ?? 0;
+  const terminalProblemRate = lifecycle.terminal_problem_rate == null ? "—" : fmtPct(lifecycle.terminal_problem_rate);
+  const timeoutRate = lifecycle.timeout_cancel_requested_rate == null ? "—" : fmtPct(lifecycle.timeout_cancel_requested_rate);
+  const avgElapsed = lifecycle.avg_elapsed_sec == null ? "—" : `${Number(lifecycle.avg_elapsed_sec).toFixed(2)}s`;
+  const maxElapsed = lifecycle.max_elapsed_sec == null ? "—" : `${Number(lifecycle.max_elapsed_sec).toFixed(2)}s`;
+  const statusDetailBreakdown = lifecycle.status_detail_breakdown || {};
+  list(
+    document.getElementById("list-exec-lifecycle"),
+    items.map((item) => {
+      return `<div class="item"><div class="row"><span class="tag ${item.tag}">${escapeHtml(item.label)}</span><span class="msg inline">${escapeHtml(String(item.value))}</span></div></div>`;
+    }).concat([
+      `<div class="item"><div class="row"><span class="tag ${(lifecycle.terminal_problem_count || 0) > 0 ? "warn" : "good"}">Problem Orders</span><span class="msg inline">${escapeHtml(String(lifecycle.terminal_problem_count ?? 0))}</span></div><div class="meta">total=${escapeHtml(String(total))} rate=${escapeHtml(terminalProblemRate)} timeout_rate=${escapeHtml(timeoutRate)} avg_elapsed=${escapeHtml(avgElapsed)} max_elapsed=${escapeHtml(maxElapsed)}</div><div class="meta">detail=${escapeHtml(JSON.stringify(statusDetailBreakdown))}</div></div>`,
+    ])
+  );
+}
+
+function renderProviderHealth(providerStatus) {
+  const items = [];
+  ["macro", "fundamental", "news", "market"].forEach((kind) => {
+    const item = providerStatus?.[kind];
+    if (!item) return;
+    const attempts = Array.isArray(item.attempts) ? item.attempts : [];
+    const attemptText = attempts.length
+      ? attempts.map((x) => `${x.provider}:${x.outcome}`).join(" -> ")
+      : "—";
+    const tagClass = item.mode === "degraded" ? "bad" : item.mode === "stale_cache" ? "warn" : "good";
+    const budgetStateText = item.budget_state || "—";
+    const ageText = Number.isFinite(Number(item.age_seconds)) ? fmtAge(item.age_seconds) : "—";
+    const budgetText = Number.isFinite(Number(item.budget_limit))
+      ? `${item.budget_used || 0}/${item.budget_limit}`
+      : "—";
+    const budgetRemainingText = Number.isFinite(Number(item.budget_remaining))
+      ? `${item.budget_remaining} left`
+      : "—";
+    const budgetProviderText = item.budget_provider || item.selected_provider || "—";
+    const lastAttempt = attempts.length ? attempts[attempts.length - 1] : null;
+    const lastAttemptText = lastAttempt
+      ? `${lastAttempt.provider || "—"}:${lastAttempt.outcome || "—"}`
+      : "—";
+
+    items.push(
+      `<div class="item"><div class="row"><span class="tag ${tagClass}">${escapeHtml(kind)}</span><span class="tag ${budgetClass(budgetStateText)}">${escapeHtml(budgetStateText)}</span></div><div class="msg">provider=${escapeHtml(item.selected_provider || "—")} mode=${escapeHtml(item.mode || "—")} age=${escapeHtml(ageText)} detail=${escapeHtml(item.detail || "—")}</div><div class="meta">budget_provider=${escapeHtml(budgetProviderText)} used=${escapeHtml(budgetText)} remaining=${escapeHtml(budgetRemainingText)} cost=${escapeHtml(item.budget_cost ?? "—")}</div><div class="meta">last_attempt=${escapeHtml(lastAttemptText)} attempts=${escapeHtml(attemptText)}</div></div>`
+    );
+  });
+
+  list(
+    document.getElementById("list-provider-health"),
+    items.length ? items : [`<div class="item"><div class="msg">No provider health data.</div></div>`]
+  );
 }
 
 function svgLine(xs, ys) {
@@ -156,11 +446,19 @@ function list(el, items) {
 }
 
 async function refresh() {
-  const [decision, rag, ledger, review, alerts, logText, metrics, equity, heartbeat] = await Promise.all([
-    jget("/api/decision"),
-    jget("/api/rag"),
-    jget("/api/ledger"),
-    jget("/api/review"),
+  const dates = await jget("/api/dates");
+  const replayDates = normalizeDates(dates);
+  syncDateControls(replayDates);
+
+  const replayParams = selectedDate ? { date: selectedDate } : {};
+  const compareParams = compareDate ? { date: compareDate } : {};
+  const [decision, rag, ledger, review, compareDecision, compareReview, alerts, logText, metrics, equity, heartbeat] = await Promise.all([
+    jget("/api/decision", replayParams),
+    jget("/api/rag", replayParams),
+    jget("/api/ledger", replayParams),
+    jget("/api/review", replayParams),
+    compareDate ? jget("/api/decision", compareParams) : Promise.resolve({ payload: null }),
+    compareDate ? jget("/api/review", compareParams) : Promise.resolve(null),
     jget("/api/alerts?limit=200"),
     tget("/api/log?lines=200"),
     jget("/api/metrics?limit=120"),
@@ -174,8 +472,12 @@ async function refresh() {
   const lPayload = ledger?.payload || null;
 
   const status = dPayload?.status || "unknown";
-  const broker = (metrics.items?.slice(-1)[0]?.broker) || "—";
-  const date = dPayload ? (dec.date || dPayload.date || "—") : "—";
+  const metricItems = Array.isArray(metrics.items) ? metrics.items : [];
+  const selectedMetric = selectedDate
+    ? metricItems.find((item) => String(item?.date || "") === selectedDate)
+    : metricItems[metricItems.length - 1];
+  const broker = selectedMetric?.broker || "—";
+  const date = selectedDate || (dPayload ? (dec.date || dPayload.date || "—") : "—");
 
   const pillStatus = document.getElementById("pill-status");
   pillStatus.textContent = status;
@@ -185,7 +487,7 @@ async function refresh() {
   if (status === "invalid" || status === "exception") pillStatus.classList.add("bad");
 
   document.getElementById("pill-broker").textContent = `broker: ${broker}`;
-  document.getElementById("pill-date").textContent = `date: ${date}`;
+  document.getElementById("pill-date").textContent = selectedDate ? `date: ${date} · replay` : `date: ${date}`;
 
   const runtimePill = document.getElementById("pill-runtime");
   const currentRun = heartbeat?.current || null;
@@ -207,8 +509,8 @@ async function refresh() {
   document.getElementById("kpi-equity").textContent = lastEq ? fmtMoney(lastEq.equity) : "—";
   document.getElementById("kpi-cash").textContent = lastEq ? fmtMoney(lastEq.cash) : "—";
   document.getElementById("kpi-pos").textContent = lastEq ? fmtMoney(lastEq.positions_value) : "—";
-  const lastTurn = metrics.items?.slice(-1)[0]?.turnover;
-  document.getElementById("kpi-turnover").textContent = lastTurn === undefined ? "—" : fmtPct(lastTurn);
+  const currentTurnover = selectedMetric?.turnover;
+  document.getElementById("kpi-turnover").textContent = currentTurnover === undefined ? "—" : fmtPct(currentTurnover);
 
   const market = rPayload?.market || {};
   const prices = market?.prices || {};
@@ -266,10 +568,10 @@ async function refresh() {
     document.getElementById("list-evidence"),
     evidence.length
       ? evidence.slice(0, 12).map((e) => {
-          const src = e.source || "—";
-          const tk = e.ticker ? ` · ${e.ticker}` : "";
+          const src = String(e?.source || "—");
+          const tk = e?.ticker ? ` · ${String(e.ticker)}` : "";
           const q = e.quote || "";
-          return `<div class="item"><div class="row"><span class="tag">${src}${tk}</span></div><div class="msg">${escapeHtml(q)}</div></div>`;
+          return `<div class="item"><div class="row"><span class="tag">${escapeHtml(src + tk)}</span></div><div class="msg">${escapeHtml(q)}</div></div>`;
         })
       : [`<div class="item"><div class="msg">—</div></div>`]
   );
@@ -303,6 +605,7 @@ async function refresh() {
 
   const rec = dPayload?.reconciliation || lPayload?.reconciliation || null;
   document.getElementById("text-reconcile").textContent = rec ? JSON.stringify(rec, null, 2) : "—";
+  renderExecutionLifecycle(review);
 
   const runtimeHighlights = [];
   runtimeHighlights.push(
@@ -318,32 +621,13 @@ async function refresh() {
     `<div class="item"><div class="row"><span class="tag ${lastRun?.error ? "bad" : "good"}">Recent Run</span></div><div class="msg">start=${escapeHtml(fmtTs(lastRun?.started_at))} end=${escapeHtml(fmtTs(lastRun?.ended_at))}</div><div class="meta">duration=${escapeHtml(lastRun?.duration_sec ?? "—")} error=${escapeHtml(lastRun?.error || "none")}</div></div>`
   );
   const providerStatus = rPayload?.provider_status || {};
-  ["macro", "fundamental", "news", "market"].forEach((kind) => {
-    const item = providerStatus?.[kind];
-    if (!item) return;
-    const attemptText = Array.isArray(item.attempts)
-      ? item.attempts.map((x) => `${x.provider}:${x.outcome}`).join(" -> ")
-      : "—";
-    const tagClass = item.mode === "degraded" ? "bad" : item.mode === "stale_cache" ? "warn" : "good";
-    const ageText = Number.isFinite(Number(item.age_seconds)) ? fmtAge(item.age_seconds) : "—";
-    const budgetText = Number.isFinite(Number(item.budget_limit))
-      ? `${item.budget_used || 0}/${item.budget_limit}`
-      : "—";
-    const budgetRemainingText = Number.isFinite(Number(item.budget_remaining))
-      ? `${item.budget_remaining} left`
-      : "—";
-    const budgetStateText = item.budget_state || "—";
-    const budgetProviderText = item.budget_provider || item.selected_provider || "—";
-    runtimeHighlights.push(
-      `<div class="item"><div class="row"><span class="tag ${tagClass}">${escapeHtml(kind)}</span><span class="tag ${budgetClass(budgetStateText)}">${escapeHtml(budgetStateText)}</span></div><div class="msg">provider=${escapeHtml(item.selected_provider || "—")} mode=${escapeHtml(item.mode || "—")} age=${escapeHtml(ageText)}</div><div class="meta">budget_provider=${escapeHtml(budgetProviderText)} used=${escapeHtml(budgetText)} remaining=${escapeHtml(budgetRemainingText)} cost=${escapeHtml(item.budget_cost ?? "—")}</div><div class="meta">detail=${escapeHtml(item.detail || "—")} attempts=${escapeHtml(attemptText)}</div></div>`
-    );
-  });
   if (killSwitch?.recovery_hint) {
     runtimeHighlights.push(
       `<div class="item"><div class="row"><span class="tag ${heartbeat?.kill_switch_locked ? "warn" : "good"}">Recovery</span></div><div class="msg">${escapeHtml(killSwitch.recovery_hint)}</div></div>`
     );
   }
   list(document.getElementById("list-runtime-highlights"), runtimeHighlights);
+  renderProviderHealth(providerStatus);
   document.getElementById("text-heartbeat").textContent = JSON.stringify(heartbeat || {}, null, 2);
 
   const reviewHighlights = Array.isArray(review?.highlights) ? review.highlights : [];
@@ -353,6 +637,7 @@ async function refresh() {
       ? reviewHighlights.map((msg) => `<div class="item"><div class="msg">${escapeHtml(msg)}</div></div>`)
       : [`<div class="item"><div class="msg">No review highlights.</div></div>`]
   );
+  renderExecutionQuality(review);
 
   document.getElementById("text-review-summary").textContent = JSON.stringify(
     {
@@ -377,6 +662,8 @@ async function refresh() {
     ],
     Array.isArray(review?.position_changes) ? review.position_changes : []
   );
+
+  renderCompare(compareDecision, compareReview, dec, review);
 
   const alertItems = Array.isArray(alerts.items) ? alerts.items : [];
   list(
@@ -409,6 +696,38 @@ function escapeHtml(s) {
 
 document.getElementById("btn-refresh").addEventListener("click", () => {
   refresh().catch((e) => console.error(e));
+});
+
+document.getElementById("select-date").addEventListener("change", (event) => {
+  selectedDate = String(event.target.value || "");
+  syncUrlDateParams();
+  refresh().catch((e) => {
+    document.getElementById("text-log").textContent = String(e);
+  });
+});
+
+document.getElementById("select-compare-date").addEventListener("change", (event) => {
+  compareDate = String(event.target.value || "");
+  syncUrlDateParams();
+  refresh().catch((e) => {
+    document.getElementById("text-log").textContent = String(e);
+  });
+});
+
+document.getElementById("btn-date-latest").addEventListener("click", () => {
+  selectedDate = "";
+  syncUrlDateParams();
+  refresh().catch((e) => {
+    document.getElementById("text-log").textContent = String(e);
+  });
+});
+
+document.getElementById("btn-compare-clear").addEventListener("click", () => {
+  compareDate = "";
+  syncUrlDateParams();
+  refresh().catch((e) => {
+    document.getElementById("text-log").textContent = String(e);
+  });
 });
 
 refresh().catch((e) => {

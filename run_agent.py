@@ -1,16 +1,22 @@
+import os
+import uuid
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from utils.logger import setup_logger
 logger = setup_logger(__name__)
-
-import os
 from config import (
-    ALPHA_VANTAGE_KEY, VOLCENGINE_API_KEY, VOLCENGINE_MODEL_ENDPOINT, 
-    TECH_UNIVERSE, INITIAL_CAPITAL, BROKER_TYPE, ENABLE_LIVE_TRADING, IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID
+    ALPHA_VANTAGE_KEY, VOLCENGINE_API_KEY, VOLCENGINE_MODEL_ENDPOINT,
+    TECH_UNIVERSE, INITIAL_CAPITAL, BROKER_TYPE, ENABLE_LIVE_TRADING, IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID,
+    MARKET_TIMEZONE,
 )
 from data.cache import PortfolioDB
 from data.retriever import RAGRetriever
 from llm.volcengine import VolcengineLLMClient
 from execution.broker import MockBroker, IBKRBroker
 from core.agent import MacroQuantAgent
+from utils.heartbeat import HeartbeatStore
+from utils.run_lock import RunLock
 
 
 def build_agent(run_mode: str = "manual") -> MacroQuantAgent:
@@ -38,11 +44,35 @@ def build_agent(run_mode: str = "manual") -> MacroQuantAgent:
 
 def main(run_mode: str = "manual"):
     logger.info("=== LLM 科技股量化决策引擎 V6.0 (实盘 Broker 统一版) ===\n")
-    agent = build_agent(run_mode=run_mode)
+    date_str = datetime.now(ZoneInfo(MARKET_TIMEZONE)).date().isoformat()
+    owner_id = uuid.uuid4().hex
+    heartbeat_store = HeartbeatStore()
+    run_lock = RunLock()
+    lock_result = run_lock.acquire(
+        owner_id=owner_id,
+        run_mode=run_mode,
+        date_str=date_str,
+        heartbeat_store=heartbeat_store,
+    )
+    if not lock_result.get("acquired"):
+        existing = lock_result.get("existing") if isinstance(lock_result.get("existing"), dict) else {}
+        logger.warning(
+            "⏸️ 检测到已有 daily agent 正在运行，跳过本次启动。"
+            f" pid={existing.get('pid')} host={existing.get('host')} acquired_at={existing.get('acquired_at')}"
+        )
+        return {"status": "already_running", "lock": lock_result}
+    if lock_result.get("stale_recovered"):
+        logger.warning("♻️ 检测到陈旧运行锁，已自动清理并继续本次启动。")
 
-    # 4. 运行今日交易循环
-    logger.info("\n" + "="*40 + " [今日交易循环启动] " + "="*40)
-    return agent.run_daily_routine()
+    try:
+        agent = build_agent(run_mode=run_mode)
+
+        # 4. 运行今日交易循环
+        logger.info("\n" + "="*40 + " [今日交易循环启动] " + "="*40)
+        return agent.run_daily_routine()
+    finally:
+        if not run_lock.release(owner_id):
+            logger.warning("⚠️ 本次运行结束后未能确认释放运行锁，请检查 runtime/agent_run.lock。")
 
 
 if __name__ == "__main__":

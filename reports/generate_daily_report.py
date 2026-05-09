@@ -142,7 +142,17 @@ def generate_daily_report(date_str: Optional[str] = None) -> str:
     report_lines.append(f"- planned_net_cash_flow: {float(order_summary.get('planned_net_cash_flow') or 0.0):.2f}")
     execution_quality = review.get("execution_quality") or {}
     report_lines.append(f"- fill_ratio: {execution_quality.get('fill_ratio') if execution_quality.get('fill_ratio') is not None else 'n/a'}")
+    report_lines.append(f"- fill_notional_ratio: {execution_quality.get('fill_notional_ratio') if execution_quality.get('fill_notional_ratio') is not None else 'n/a'}")
     report_lines.append(f"- estimated_slippage_cost: {float(execution_quality.get('estimated_slippage_cost') or 0.0):.2f}")
+    report_lines.append(f"- estimated_slippage_bps: {float(execution_quality.get('estimated_slippage_bps') or 0.0):.2f}")
+    report_lines.append(f"- reported_commission_total: {float(execution_quality.get('reported_commission_total') or 0.0):.2f}")
+    report_lines.append(f"- reported_commission_bps: {float(execution_quality.get('reported_commission_bps') or 0.0):.2f}")
+    report_lines.append(f"- missed_notional: {float(execution_quality.get('missed_notional') or 0.0):.2f}")
+    execution_lifecycle = review.get("execution_lifecycle") or {}
+    report_lines.append(f"- timeout_cancel_requested_count: {execution_lifecycle.get('timeout_cancel_requested_count', 0)}")
+    report_lines.append(f"- partial_terminal_count: {execution_lifecycle.get('partial_terminal_count', 0)}")
+    report_lines.append(f"- avg_elapsed_sec: {execution_lifecycle.get('avg_elapsed_sec') if execution_lifecycle.get('avg_elapsed_sec') is not None else 'n/a'}")
+    report_lines.append(f"- max_elapsed_sec: {execution_lifecycle.get('max_elapsed_sec') if execution_lifecycle.get('max_elapsed_sec') is not None else 'n/a'}")
     report_lines.append(f"- reconcile_ok: {review.get('reconcile_ok')}")
 
     top_allocations = review.get("top_allocations") or []

@@ -90,6 +90,27 @@ def _latest_file(dirpath: str, prefix: str) -> Optional[str]:
     return os.path.join(dirpath, f"{prefix}{dates[-1]}.json")
 
 
+def _date_from_prefixed_json_path(path: Optional[str], prefix: str) -> Optional[str]:
+    if not path:
+        return None
+    base = os.path.basename(path)
+    if not base.startswith(prefix) or not base.endswith(".json"):
+        return None
+    return base[len(prefix) : -5] or None
+
+
+def _resolve_review_paths(date: Optional[str], snapshots: str, ledger_dir: str) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    if date:
+        decision_path = os.path.join(snapshots, f"decision_{date}.json")
+        ledger_path = os.path.join(ledger_dir, f"execution_{date}.json")
+        return decision_path, ledger_path, date
+
+    decision_path = _latest_file(snapshots, "decision_")
+    decision_date = _date_from_prefixed_json_path(decision_path, "decision_")
+    ledger_path = os.path.join(ledger_dir, f"execution_{decision_date}.json") if decision_date else None
+    return decision_path, ledger_path, decision_date
+
+
 def _latest_metrics(limit: int = 500) -> list[dict]:
     p = os.path.join(ROOT, "metrics", "metrics.jsonl")
     return _tail_jsonl(p, limit)
@@ -287,24 +308,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             ledger_dir = os.path.join(ROOT, "ledger")
             metrics_items = _latest_metrics(500)
             latest_metric = None
-            if date:
+            decision_path, ledger_path, review_date = _resolve_review_paths(date, snapshots, ledger_dir)
+            if review_date:
                 for item in metrics_items:
-                    if str(item.get("date", "")) == date:
+                    if str(item.get("date", "")) == review_date:
                         latest_metric = item
-                decision_path = os.path.join(snapshots, f"decision_{date}.json")
-                ledger_path = os.path.join(ledger_dir, f"execution_{date}.json")
-            else:
-                decision_path = _latest_file(snapshots, "decision_")
-                decision_date = None
-                if decision_path:
-                    base = os.path.basename(decision_path)
-                    if base.startswith("decision_") and base.endswith(".json"):
-                        decision_date = base[len("decision_") : -5]
-                if decision_date:
-                    for item in metrics_items:
-                        if str(item.get("date", "")) == decision_date:
-                            latest_metric = item
-                ledger_path = _latest_file(ledger_dir, "execution_")
 
             decision_doc = _read_json(decision_path) if decision_path and os.path.exists(decision_path) else None
             ledger_doc = _read_json(ledger_path) if ledger_path and os.path.exists(ledger_path) else None

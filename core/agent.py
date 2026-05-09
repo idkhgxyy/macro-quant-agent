@@ -6,7 +6,6 @@ from zoneinfo import ZoneInfo
 from utils.logger import setup_logger
 logger = setup_logger(__name__)
 
-from config import MAX_API_ERRORS
 from config import BROKER_TYPE, ENABLE_LIVE_TRADING
 from config import MARKET_TIMEZONE
 from config import ENFORCE_RTH, RTH_START, RTH_END, HALF_DAY_RTH_END, ALLOW_OUTSIDE_RTH

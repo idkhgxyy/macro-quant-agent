@@ -38,7 +38,10 @@
 - [ ] Dashboard 日期回放与多日对比：支持按日期查看历史 decision/rag/ledger，并对比持仓变化、策略变化与资金曲线
 - [x] 无人值守调度与心跳：定时运行 daily agent、补充运行心跳与每日摘要通知，降低人工盯盘成本
 - [x] Kill switch 状态中心：用结构化 state 文件记录触发原因/时间/恢复条件，并在 Dashboard 顶部明确展示当前熔断状态
-- [ ] 交易成本观测：统计佣金、滑点、取消率与未成交率，帮助区分“策略问题”和“执行问题”
+- [x] 交易成本观测：统计佣金、滑点、取消率与未成交率，帮助区分“策略问题”和“执行问题”
+- [ ] 数据源健康面板：展示 provider budget/cooldown/last_success/last_error/实际命中链路，缩短外部数据故障排障时间
+- [ ] 执行生命周期分析：细化 `submitted_no_report`、`partial`、超时撤单、拒单原因和成交时延，形成更完整的执行质量画像
+- [x] 调度与运行锁增强：增加单实例运行锁、重复触发保护、失败重入策略与健康检查，降低无人值守运行风险
 - [x] 核心回归测试补齐：覆盖 PortfolioManager、reconcile_execution、Dashboard token 鉴权等关键路径，降低后续迭代回归风险
 - [x] 仓库入口收敛：将教学/旧原型脚本迁移到 `examples/` 或 `legacy/`，主入口聚焦 `run_agent.py` / `run_llm_backtest.py`
 
@@ -50,8 +53,19 @@
 - [ ] 测试体系：pytest（优先覆盖 PortfolioManager 风控规则与 LLM 校验器）
 - [ ] 集成测试：从“检索→LLM→风控→下单（Mock）→对账”全链路
 - [ ] CI：lint + type-check + pytest
+- [ ] 编排器分层重构：将 `MacroQuantAgent` 按 planning / execution / persistence / ops 拆成更清晰的 service，降低主编排器复杂度
+- [ ] 状态存储抽象与数据库迁移：先为 `snapshots` / `ledger` / `metrics` / `runtime` 建立统一 store 接口，再评估 SQLite / Postgres 落地
+- [ ] 调度与监控体系升级：在现有轻量 scheduler 之外，引入更正式的任务调度、失败恢复与外部监控接入能力
 - [x] 收益归因与复盘：拆分收益来源（仓位变化、计划现金占比、执行质量、估算滑点、现金拖累），用于评估 LLM 决策质量
 - [ ] 多策略集成：让系统同时产出趋势/事件/防守等子策略，再由上层做加权或投票，减少单一 Prompt 风险
+
+## 下一阶段建议（基于 Code-Wiki）
+
+1. 先完成 `P1` 中最贴近现有闭环的缺口：`Dashboard 日期回放与多日对比`、`交易成本观测`、`执行生命周期分析`。这三项能直接提升复盘与排障效率，也是当前 Dashboard / ledger / metrics 产物最值得继续挖深的方向。
+2. 紧接着补 `集成测试` 与 `CI`。当前单元测试基础已经不错，但主链路仍缺少“检索 -> LLM -> 风控 -> Mock 执行 -> 对账”的自动化回归，以及 lint / type-check 的质量闸门。
+3. 然后做 `数据源健康面板` 与 `调度与运行锁增强`。`Code-Wiki` 明确指出外部数据源稳定性和单机无人值守运行仍是薄弱点，这两项能优先降低真实运行中的运维成本。
+4. 中期进入架构治理：推进 `编排器分层重构`，把 `MacroQuantAgent` 的职责拆薄；同时做 `状态存储抽象与数据库迁移`，先解耦接口，再考虑 SQLite / Postgres，而不是直接替换文件产物。
+5. 最后再扩能力边界：`向量库 RAG`、`更多数据源`、`多策略集成`。这些能增强策略表达力，但优先级应低于稳定性、审计和执行质量建设。
 
 ## 完成记录
 
@@ -84,3 +98,8 @@
 - 2026-05-04：新增 [review.py](file:///Users/gxyy/Documents/isolation/utils/review.py) 统一生成轻量复盘与收益归因摘要，拆分目标现金占比、仓位变化、计划现金流、成交率、估算滑点和对账结果；[generate_daily_report.py](file:///Users/gxyy/Documents/isolation/reports/generate_daily_report.py) 将其写入日报，[dashboard/server.py](file:///Users/gxyy/Documents/isolation/dashboard/server.py) 新增 `/api/review`，前端 [index.html](file:///Users/gxyy/Documents/isolation/dashboard/static/index.html) / [app.js](file:///Users/gxyy/Documents/isolation/dashboard/static/app.js) 增加 Review 面板；新增 [test_day_review.py](file:///Users/gxyy/Documents/isolation/tests/test_day_review.py) 固化核心口径。
 - 2026-05-04：新增 [heartbeat.py](file:///Users/gxyy/Documents/isolation/utils/heartbeat.py) 写入统一 `runtime/heartbeat.json` 运行状态文件，记录 `current` / `last_run` / `last_success` / `recent_runs` / `scheduler`；[agent.py](file:///Users/gxyy/Documents/isolation/core/agent.py) 在每次 daily run 前后自动更新心跳；新增 [run_scheduler.py](file:///Users/gxyy/Documents/isolation/run_scheduler.py) 作为轻量定时入口，支持按配置时间每日触发；[dashboard/server.py](file:///Users/gxyy/Documents/isolation/dashboard/server.py) 增加 `/api/heartbeat`，前端 [index.html](file:///Users/gxyy/Documents/isolation/dashboard/static/index.html) / [app.js](file:///Users/gxyy/Documents/isolation/dashboard/static/app.js) 增加 Runtime 面板；新增 [test_heartbeat_scheduler.py](file:///Users/gxyy/Documents/isolation/tests/test_heartbeat_scheduler.py) 固化心跳与调度时间逻辑。
 - 2026-05-04：新增 [kill_switch.py](file:///Users/gxyy/Documents/isolation/utils/kill_switch.py) 作为结构化熔断状态中心，将锁状态写入 `runtime/kill_switch.json`，统一记录 `reason` / `source` / `triggered_at` / `recovery_hint` / `history`；[agent.py](file:///Users/gxyy/Documents/isolation/core/agent.py) 的检查与触发逻辑改为通过该状态中心驱动，同时保留 `kill_switch.lock` 兼容层；[dashboard/server.py](file:///Users/gxyy/Documents/isolation/dashboard/server.py) 在 `/api/heartbeat` 返回完整 kill switch 详情，前端 [app.js](file:///Users/gxyy/Documents/isolation/dashboard/static/app.js) 在 Runtime 面板展示触发原因、来源、时间与恢复提示；新增 [test_kill_switch_state.py](file:///Users/gxyy/Documents/isolation/tests/test_kill_switch_state.py) 固化状态读写与兼容逻辑。
+- 2026-05-09：新增 [run_lock.py](file:///Users/gxyy/Documents/isolation/utils/run_lock.py) 作为 daily agent 的单实例运行锁，默认写入 `runtime/agent_run.lock`；[run_agent.py](file:///Users/gxyy/Documents/isolation/run_agent.py) 在启动前统一获取运行锁，遇到并发启动时返回 `already_running`，遇到陈旧锁时自动恢复；[heartbeat.py](file:///Users/gxyy/Documents/isolation/utils/heartbeat.py) 新增 `recover_stale_current()` 用于清理异常残留的 `current=running`；[run_scheduler.py](file:///Users/gxyy/Documents/isolation/run_scheduler.py) 在调度触发时识别并记录“已有实例运行中”的阻塞状态，避免重复拉起；新增 [test_run_lock.py](file:///Users/gxyy/Documents/isolation/tests/test_run_lock.py) 覆盖并发拦截和陈旧锁恢复。
+- 2026-05-09：继续收敛 [run_scheduler.py](file:///Users/gxyy/Documents/isolation/run_scheduler.py) 的失败重入语义：新增 `is_already_running_result()` 与 `resolve_last_run_date()`，把“锁冲突跳过”视作当天已触发、把“真实异常失败”保留为当天可重试；补充 [test_heartbeat_scheduler.py](file:///Users/gxyy/Documents/isolation/tests/test_heartbeat_scheduler.py) 固化这两个边界条件。
+- 2026-05-09：继续修复运行守卫边界：增强 [run_scheduler.py](file:///Users/gxyy/Documents/isolation/run_scheduler.py) 对残留 `heartbeat.current=running` 的陈旧检测，发现死进程或超时陈旧状态时自动调用 [heartbeat.py](file:///Users/gxyy/Documents/isolation/utils/heartbeat.py) 的恢复逻辑，避免 scheduler 被永久阻塞；同时修正 [run_lock.py](file:///Users/gxyy/Documents/isolation/utils/run_lock.py) 的 TTL 语义，同机且 PID 仍存活时不再因锁年龄过大误判为陈旧锁；补充 [test_heartbeat_scheduler.py](file:///Users/gxyy/Documents/isolation/tests/test_heartbeat_scheduler.py) 与 [test_run_lock.py](file:///Users/gxyy/Documents/isolation/tests/test_run_lock.py) 覆盖这两个边界。
+- 2026-05-09：增强 [broker.py](file:///Users/gxyy/Documents/isolation/execution/broker.py) 在执行回报中统一附带 `commission` 字段，`IBKRBroker` 聚合成交佣金、`MockBroker` 明确返回 `0.0`；增强 [review.py](file:///Users/gxyy/Documents/isolation/utils/review.py) 输出 `requested_notional`、`filled_notional`、`fill_notional_ratio`、`estimated_slippage_bps`、`reported_commission_total`、`reported_commission_bps` 与 `missed_notional`；前端 [app.js](file:///Users/gxyy/Documents/isolation/dashboard/static/app.js) 的 `Execution Quality` 卡片同步展示这些指标；日报 [generate_daily_report.py](file:///Users/gxyy/Documents/isolation/reports/generate_daily_report.py) 追加成本口径；补充 [test_day_review.py](file:///Users/gxyy/Documents/isolation/tests/test_day_review.py) 固化佣金与名义成交额相关统计。
+- 2026-05-09：增强 [broker.py](file:///Users/gxyy/Documents/isolation/execution/broker.py) 为执行回报补充 `submitted_at`、`completed_at`、`elapsed_sec`、`timeout_cancel_requested`、`status_detail` 与 `status_history`，并在超时撤单场景保留生命周期信号；增强 [review.py](file:///Users/gxyy/Documents/isolation/utils/review.py) 输出 `timeout_cancel_requested_count`、`partial_terminal_count`、`avg_elapsed_sec`、`max_elapsed_sec` 与 `status_detail_breakdown`；前端 [app.js](file:///Users/gxyy/Documents/isolation/dashboard/static/app.js) 的 `Lifecycle Summary` 卡片同步展示超时撤单率、时延与细分状态；日报 [generate_daily_report.py](file:///Users/gxyy/Documents/isolation/reports/generate_daily_report.py) 追加生命周期摘要；补充 [test_day_review.py](file:///Users/gxyy/Documents/isolation/tests/test_day_review.py) 固化时延与超时撤单口径。

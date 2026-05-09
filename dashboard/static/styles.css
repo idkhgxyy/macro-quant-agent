@@ -211,6 +211,7 @@ body{
 .tag.good{border-color: rgba(46,229,157,.33); background: rgba(46,229,157,.10); color: rgba(190,255,230,.98)}
 .item .msg{margin-top:8px; font-size:12px; color: rgba(233,236,245,.88); line-height:1.45}
 .item .meta{margin-top:8px; font-family:var(--mono); font-size:11px; color: rgba(233,236,245,.55)}
+.item .msg.inline{margin-top:0}
 
 .foot{
   position:fixed;
@@ -228,6 +229,37 @@ body{
   gap:12px;
 }
 .foot-note{font-size:12px; color:var(--muted)}
+.foot-actions{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+}
+.control-group{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+}
+.control-label{
+  font-size:12px;
+  color:var(--muted);
+}
+.select{
+  appearance:none;
+  min-width:140px;
+  border:1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.06);
+  color:var(--text);
+  padding:10px 12px;
+  border-radius: 12px;
+  font-size:13px;
+}
+.select:focus{
+  outline:none;
+  border-color: rgba(110,231,255,.32);
+  box-shadow: 0 0 0 3px rgba(110,231,255,.10);
+}
 .btn{
   appearance:none;
   border:1px solid rgba(255,255,255,.14);
@@ -249,4 +281,7 @@ body{
 @media (max-width: 560px){
   .kpi-row{grid-template-columns: 1fr}
   .meta{justify-content:flex-start}
+  .control-group{width:100%}
+  .select{flex:1}
+  .foot-inner{align-items:flex-start}
 }

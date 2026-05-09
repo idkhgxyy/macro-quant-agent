@@ -158,6 +158,56 @@ class HeartbeatStore:
         self.save(doc)
         return summary
 
+    def recover_stale_current(
+        self,
+        *,
+        reason: str,
+        pid: Optional[int] = None,
+        host: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        doc = self.load()
+        current = doc.get("current")
+        if not isinstance(current, dict) or not current:
+            return None
+        if pid is not None:
+            try:
+                current_pid = int(current.get("pid"))
+            except Exception:
+                current_pid = None
+            if current_pid != int(pid):
+                return None
+        if host is not None and str(current.get("host") or "") != str(host):
+            return None
+
+        ended_at = utc_now_z()
+        summary = {
+            **current,
+            "status": "stale_recovered",
+            "ended_at": ended_at,
+            "error": str(reason or "stale_current_recovered"),
+            "stale_recovered": True,
+        }
+        duration_sec = _duration_seconds(summary.get("started_at"), ended_at)
+        if duration_sec is not None:
+            summary["duration_sec"] = duration_sec
+
+        doc["current"] = None
+        doc["last_run"] = summary
+
+        recent_runs = doc.get("recent_runs")
+        if not isinstance(recent_runs, list):
+            recent_runs = []
+        run_id = str(summary.get("run_id") or "")
+        recent_runs = [
+            item
+            for item in recent_runs
+            if not (isinstance(item, dict) and str(item.get("run_id") or "") == run_id)
+        ]
+        recent_runs.insert(0, summary)
+        doc["recent_runs"] = recent_runs[: self.recent_limit]
+        self.save(doc)
+        return summary
+
     def update_scheduler(
         self,
         *,

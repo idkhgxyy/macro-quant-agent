@@ -66,6 +66,10 @@
               <div class="list" id="list-runtime-highlights"></div>
             </div>
             <div class="block">
+              <div class="label">Provider Health</div>
+              <div class="list" id="list-provider-health"></div>
+            </div>
+            <div class="block">
               <div class="label">State File</div>
               <pre class="mono" id="text-heartbeat">—</pre>
             </div>
@@ -122,6 +126,10 @@
               <div class="table" id="table-orders"></div>
             </div>
             <div class="block">
+              <div class="label">Lifecycle Summary</div>
+              <div class="list" id="list-exec-lifecycle"></div>
+            </div>
+            <div class="block">
               <div class="label">Execution Report</div>
               <div class="table" id="table-exec"></div>
             </div>
@@ -142,6 +150,10 @@
               <div class="label">Highlights</div>
               <div class="list" id="list-review-highlights"></div>
             </div>
+            <div class="block">
+              <div class="label">Execution Quality</div>
+              <div class="list" id="list-execution-quality"></div>
+            </div>
             <div class="block split">
               <div>
                 <div class="label">Attribution Preview</div>
@@ -151,6 +163,27 @@
                 <div class="label">Position Changes</div>
                 <div class="table" id="table-review-changes"></div>
               </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-hd">
+            <div class="card-title">Compare</div>
+            <div class="card-note">对比当前回放日期与另一历史日期的状态、策略和持仓变化</div>
+          </div>
+          <div class="strategy">
+            <div class="block">
+              <div class="label">Summary</div>
+              <pre class="mono" id="text-compare-summary">—</pre>
+            </div>
+            <div class="block">
+              <div class="label">Strategy Delta</div>
+              <div class="list" id="list-compare-strategies"></div>
+            </div>
+            <div class="block">
+              <div class="label">Position Delta</div>
+              <div class="table" id="table-compare-positions"></div>
             </div>
           </div>
         </div>
@@ -177,6 +210,20 @@
       <div class="foot-inner">
         <div class="foot-note">Local dashboard for inspection & replay. No trading controls exposed.</div>
         <div class="foot-actions">
+          <label class="control-group" for="select-date">
+            <span class="control-label">Replay Date</span>
+            <select class="select" id="select-date">
+              <option value="">Latest</option>
+            </select>
+          </label>
+          <label class="control-group" for="select-compare-date">
+            <span class="control-label">Compare To</span>
+            <select class="select" id="select-compare-date">
+              <option value="">Off</option>
+            </select>
+          </label>
+          <button class="btn" id="btn-date-latest">Latest</button>
+          <button class="btn" id="btn-compare-clear">Clear Compare</button>
           <button class="btn" id="btn-refresh">Refresh</button>
         </div>
       </div>
