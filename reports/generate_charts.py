@@ -2,7 +2,7 @@ import glob
 import json
 import os
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 
 def _iter_jsonl(paths: List[str]):
@@ -216,4 +216,3 @@ def generate_charts(last_n: int = 50, out_path: Optional[str] = None) -> str:
 
 if __name__ == "__main__":
     print(generate_charts())
-

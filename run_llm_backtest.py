@@ -150,7 +150,7 @@ def main():
     snapshot_missing_dates = []
 
     for current_date in test_dates:
-        logger.info(f"\n" + "="*50)
+        logger.info("\n" + "="*50)
         logger.info(f"🗓️ 正在生成 {current_date.date()} 的 LLM 交易策略...")
 
         date_str = current_date.date().isoformat()

@@ -1,4 +1,3 @@
-import os
 from datetime import datetime
 import time
 from typing import Optional

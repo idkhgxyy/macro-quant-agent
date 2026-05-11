@@ -76,7 +76,7 @@ class PortfolioManager:
         logger.info(f"🔄 本次调仓预计换手率: {turnover_ratio*100:.2f}% (限制阀值: {MAX_DAILY_TURNOVER*100:.2f}%)")
         
         if turnover_ratio > MAX_DAILY_TURNOVER:
-            logger.warning(f"🛑 [风控预警] LLM 要求的换手率过高！")
+            logger.warning("🛑 [风控预警] LLM 要求的换手率过高！")
             scale_down = MAX_DAILY_TURNOVER / turnover_ratio
             logger.info(f"🔧 [平滑疏导] 自动将所有订单数量缩减至 {scale_down*100:.1f}%...")
             for order in proposed_orders:

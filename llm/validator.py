@@ -57,7 +57,6 @@ def validate_and_clean_strategy_plan(plan: dict) -> tuple[dict, list[str], list[
         non_zero = [(t, float(weights.get(t, 0.0) or 0.0)) for t in TECH_UNIVERSE if float(weights.get(t, 0.0) or 0.0) > 0.0]
         non_zero.sort(key=lambda x: x[1], reverse=True)
         if MAX_HOLDINGS > 0 and len(non_zero) > int(MAX_HOLDINGS):
-            keep = {t for t, _ in non_zero[: int(MAX_HOLDINGS)]}
             for t, _ in non_zero[int(MAX_HOLDINGS) :]:
                 weights[t] = 0.0
             warnings.append("max_holdings_applied")

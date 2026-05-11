@@ -5,7 +5,6 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import yfinance as yf
-from datetime import datetime
 
 class VectorizedBacktester:
     """
@@ -81,7 +80,7 @@ class VectorizedBacktester:
         sharpe_ratio = (net_returns.mean() / daily_volatility) * np.sqrt(252) if daily_volatility > 0 else 0
         
         logger.info("\n" + "="*50)
-        logger.info(f"🏆 【回测绩效核心指标 (Backtest Report)】")
+        logger.info("🏆 【回测绩效核心指标 (Backtest Report)】")
         logger.info(f"回测天数: {days} 个交易日")
         logger.info(f"策略总收益: {total_return*100:.2f}% (基准: {bench_return*100:.2f}%)")
         logger.info(f"策略年化收益: {annualized_return*100:.2f}%")

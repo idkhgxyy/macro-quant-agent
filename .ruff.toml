@@ -1,0 +1,10 @@
+exclude = [
+  "legacy",
+]
+
+lint.select = [
+  "E741",
+  "F401",
+  "F541",
+  "F841",
+]

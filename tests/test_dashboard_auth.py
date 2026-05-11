@@ -1,6 +1,5 @@
 import os
 import unittest
-from types import SimpleNamespace
 from urllib.parse import urlparse
 
 from dashboard.server import is_dashboard_authorized
