@@ -24,7 +24,7 @@ class RunLock:
     def __init__(self, path: Optional[str] = None, stale_after_seconds: Optional[int] = None):
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         runtime_dir = os.getenv("RUNTIME_STATE_DIR", os.path.join(project_root, "runtime"))
-        self.path = path or os.getenv("AGENT_RUN_LOCK_PATH", os.path.join(runtime_dir, "agent_run.lock"))
+        self.path: str = str(path or os.getenv("AGENT_RUN_LOCK_PATH", os.path.join(runtime_dir, "agent_run.lock")))
         self.stale_after_seconds = max(
             int(stale_after_seconds or AGENT_RUN_LOCK_STALE_SECONDS),
             60,
@@ -43,8 +43,10 @@ class RunLock:
             return None
         return None
 
-    def _pid_exists(self, pid: Any) -> bool:
+    def _pid_exists(self, pid: object) -> bool:
         try:
+            if not isinstance(pid, (int, str, bytes, bytearray)):
+                return False
             value = int(pid)
         except Exception:
             return False

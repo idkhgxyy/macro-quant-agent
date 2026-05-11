@@ -67,6 +67,8 @@ def _parse_iso_ts(value: Optional[str]) -> Optional[datetime]:
 
 def _pid_exists(pid: object) -> bool:
     try:
+        if not isinstance(pid, (int, str, bytes, bytearray)):
+            return False
         value = int(pid)
     except Exception:
         return False
@@ -134,7 +136,8 @@ def main():
         while True:
             now = datetime.now(tz)
             doc = store.load()
-            scheduler = doc.get("scheduler") if isinstance(doc.get("scheduler"), dict) else {}
+            scheduler_raw = doc.get("scheduler")
+            scheduler: dict = scheduler_raw if isinstance(scheduler_raw, dict) else {}
             last_run_date = str(scheduler.get("last_run_date") or "")
             next_run_at = compute_next_run_at(now, AGENT_SCHEDULE_TIME)
             store.update_scheduler(
@@ -151,7 +154,8 @@ def main():
 
             if has_active_daily_run(doc):
                 if is_stale_active_daily_run(doc):
-                    current = doc.get("current") if isinstance(doc.get("current"), dict) else {}
+                    current_raw = doc.get("current")
+                    current: dict = current_raw if isinstance(current_raw, dict) else {}
                     store.recover_stale_current(
                         reason="scheduler_detected_stale_current",
                         pid=current.get("pid"),

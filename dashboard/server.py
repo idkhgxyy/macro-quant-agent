@@ -4,7 +4,7 @@ import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 ROOT = os.path.dirname(os.path.dirname(__file__))
 if ROOT not in sys.path:
@@ -48,7 +48,7 @@ def _read_json(path: str):
 
 
 def _list_dates(prefix: str, dirpath: str) -> list[str]:
-    out = []
+    out: List[str] = []
     if not os.path.isdir(dirpath):
         return out
     for name in os.listdir(dirpath):
@@ -69,9 +69,9 @@ def _tail_lines(path: str, max_lines: int) -> list[str]:
     return lines[-max_lines:]
 
 
-def _tail_jsonl(path: str, max_lines: int) -> list[dict]:
+def _tail_jsonl(path: str, max_lines: int) -> list[Dict[str, Any]]:
     lines = _tail_lines(path, max_lines)
-    out = []
+    out: List[Dict[str, Any]] = []
     for line in lines:
         line = line.strip()
         if not line:
@@ -100,23 +100,25 @@ def _date_from_prefixed_json_path(path: Optional[str], prefix: str) -> Optional[
 
 
 def _resolve_review_paths(date: Optional[str], snapshots: str, ledger_dir: str) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    decision_path: Optional[str]
+    ledger_path: Optional[str]
     if date:
         decision_path = os.path.join(snapshots, f"decision_{date}.json")
         ledger_path = os.path.join(ledger_dir, f"execution_{date}.json")
         return decision_path, ledger_path, date
 
     decision_path = _latest_file(snapshots, "decision_")
-    decision_date = _date_from_prefixed_json_path(decision_path, "decision_")
+    decision_date: Optional[str] = _date_from_prefixed_json_path(decision_path, "decision_")
     ledger_path = os.path.join(ledger_dir, f"execution_{decision_date}.json") if decision_date else None
     return decision_path, ledger_path, decision_date
 
 
-def _latest_metrics(limit: int = 500) -> list[dict]:
+def _latest_metrics(limit: int = 500) -> list[Dict[str, Any]]:
     p = os.path.join(ROOT, "metrics", "metrics.jsonl")
     return _tail_jsonl(p, limit)
 
 
-def _compute_equity_series(limit: int = 60) -> list[dict]:
+def _compute_equity_series(limit: int = 60) -> list[Dict[str, Any]]:
     snapshots = os.path.join(ROOT, "snapshots")
     rag_dates = _list_dates("rag_", snapshots)
     dec_dates = set(_list_dates("decision_", snapshots))
@@ -125,7 +127,7 @@ def _compute_equity_series(limit: int = 60) -> list[dict]:
     if limit > 0:
         dates = dates[-int(limit) :]
 
-    series = []
+    series: List[Dict[str, Any]] = []
     for d in dates:
         rag_path = os.path.join(snapshots, f"rag_{d}.json")
         dec_path = os.path.join(snapshots, f"decision_{d}.json")
@@ -148,8 +150,11 @@ def _compute_equity_series(limit: int = 60) -> list[dict]:
 
         pos_value = 0.0
         for t, sh in positions.items():
+            price_value = prices.get(t)
+            if price_value is None:
+                continue
             try:
-                p = float(prices.get(t))
+                p = float(price_value)
                 q = float(sh)
             except Exception:
                 continue
@@ -249,35 +254,38 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if path == "/api/decision":
             date = (qs.get("date") or [None])[0]
             snapshots = os.path.join(ROOT, "snapshots")
+            decision_p: Optional[str]
             if date:
-                p = os.path.join(snapshots, f"decision_{date}.json")
+                decision_p = os.path.join(snapshots, f"decision_{date}.json")
             else:
-                p = _latest_file(snapshots, "decision_")
-            if not p or not os.path.exists(p):
+                decision_p = _latest_file(snapshots, "decision_")
+            if not decision_p or not os.path.exists(decision_p):
                 return self._send_json({"payload": None})
-            return self._send_json(_read_json(p))
+            return self._send_json(_read_json(decision_p))
 
         if path == "/api/rag":
             date = (qs.get("date") or [None])[0]
             snapshots = os.path.join(ROOT, "snapshots")
+            rag_p: Optional[str]
             if date:
-                p = os.path.join(snapshots, f"rag_{date}.json")
+                rag_p = os.path.join(snapshots, f"rag_{date}.json")
             else:
-                p = _latest_file(snapshots, "rag_")
-            if not p or not os.path.exists(p):
+                rag_p = _latest_file(snapshots, "rag_")
+            if not rag_p or not os.path.exists(rag_p):
                 return self._send_json({"payload": None})
-            return self._send_json(_read_json(p))
+            return self._send_json(_read_json(rag_p))
 
         if path == "/api/ledger":
             date = (qs.get("date") or [None])[0]
             ledger_dir = os.path.join(ROOT, "ledger")
+            ledger_p: Optional[str]
             if date:
-                p = os.path.join(ledger_dir, f"execution_{date}.json")
+                ledger_p = os.path.join(ledger_dir, f"execution_{date}.json")
             else:
-                p = _latest_file(ledger_dir, "execution_")
-            if not p or not os.path.exists(p):
+                ledger_p = _latest_file(ledger_dir, "execution_")
+            if not ledger_p or not os.path.exists(ledger_p):
                 return self._send_json({"payload": None})
-            return self._send_json(_read_json(p))
+            return self._send_json(_read_json(ledger_p))
 
         if path == "/api/alerts":
             n = int((qs.get("limit") or ["100"])[0])
