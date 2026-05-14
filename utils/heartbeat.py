@@ -6,24 +6,6 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 
-def _coerce_int(value: object, default: int) -> int:
-    try:
-        if not isinstance(value, (int, str, bytes, bytearray)):
-            return int(default)
-        return int(value)
-    except Exception:
-        return int(default)
-
-
-def _try_int(value: object) -> Optional[int]:
-    try:
-        if not isinstance(value, (int, str, bytes, bytearray)):
-            return None
-        return int(value)
-    except Exception:
-        return None
-
-
 def utc_now_z() -> str:
     return datetime.utcnow().isoformat() + "Z"
 
@@ -56,9 +38,8 @@ class HeartbeatStore:
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         runtime_dir = os.getenv("RUNTIME_STATE_DIR", os.path.join(project_root, "runtime"))
         default_path = os.getenv("HEARTBEAT_STATE_PATH", os.path.join(runtime_dir, "heartbeat.json"))
-        self.path: str = str(path or default_path)
-        recent_value: object = recent_limit if recent_limit is not None else (os.getenv("HEARTBEAT_RECENT_RUNS") or "20")
-        self.recent_limit = max(_coerce_int(recent_value, 20), 1)
+        self.path = path or default_path
+        self.recent_limit = max(int(recent_limit or os.getenv("HEARTBEAT_RECENT_RUNS", "20")), 1)
         parent = os.path.dirname(self.path)
         if parent:
             os.makedirs(parent, exist_ok=True)
@@ -144,8 +125,7 @@ class HeartbeatStore:
         extra: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         doc = self.load()
-        current_raw = doc.get("current")
-        current: Dict[str, Any] = current_raw if isinstance(current_raw, dict) else {}
+        current = doc.get("current") if isinstance(doc.get("current"), dict) else {}
         base = dict(current) if str(current.get("run_id") or "") == str(run_id or "") else {"run_id": run_id}
         ended_at = utc_now_z()
         summary = {
@@ -190,7 +170,10 @@ class HeartbeatStore:
         if not isinstance(current, dict) or not current:
             return None
         if pid is not None:
-            current_pid = _try_int(current.get("pid"))
+            try:
+                current_pid = int(current.get("pid"))
+            except Exception:
+                current_pid = None
             if current_pid != int(pid):
                 return None
         if host is not None and str(current.get("host") or "") != str(host):
@@ -240,8 +223,7 @@ class HeartbeatStore:
         message: Optional[str] = None,
     ) -> Dict[str, Any]:
         doc = self.load()
-        scheduler_raw = doc.get("scheduler")
-        scheduler: Dict[str, Any] = scheduler_raw if isinstance(scheduler_raw, dict) else {}
+        scheduler = doc.get("scheduler") if isinstance(doc.get("scheduler"), dict) else {}
         scheduler.update(
             {
                 "enabled": bool(enabled),
