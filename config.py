@@ -9,8 +9,25 @@ from dotenv import load_dotenv
 load_dotenv()
 
 ALPHA_VANTAGE_KEY = os.getenv("ALPHA_VANTAGE_KEY")
-VOLCENGINE_API_KEY = os.getenv("VOLCENGINE_API_KEY")
-VOLCENGINE_MODEL_ENDPOINT = os.getenv("VOLCENGINE_MODEL_ENDPOINT")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL")
+
+# Backward-compatible aliases: existing code still imports VOLCENGINE_*,
+# but the actual provider can now be switched via env without code changes.
+VOLCENGINE_API_KEY = os.getenv("VOLCENGINE_API_KEY") or DEEPSEEK_API_KEY
+VOLCENGINE_MODEL_ENDPOINT = os.getenv("VOLCENGINE_MODEL_ENDPOINT") or DEEPSEEK_MODEL
+LLM_BASE_URL = (
+    os.getenv("LLM_BASE_URL")
+    or os.getenv("DEEPSEEK_BASE_URL")
+    or (
+        "https://api.deepseek.com"
+        if (DEEPSEEK_API_KEY or DEEPSEEK_MODEL)
+        else "https://ark.ap-southeast.bytepluses.com/api/v3"
+    )
+)
+LLM_PROVIDER = os.getenv("LLM_PROVIDER") or ("deepseek" if "deepseek.com" in LLM_BASE_URL else "volcengine")
+LLM_THINKING_TYPE = os.getenv("LLM_THINKING_TYPE", "enabled")
+LLM_REASONING_EFFORT = os.getenv("LLM_REASONING_EFFORT", "high")
 
 # ==========================================
 # 2. 全局交易风控参数配置

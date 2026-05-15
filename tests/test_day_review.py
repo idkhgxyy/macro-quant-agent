@@ -1,6 +1,6 @@
 import unittest
 
-from utils.review import build_day_review
+from utils.review import build_auto_daily_brief, build_day_review
 
 
 class DayReviewTests(unittest.TestCase):
@@ -12,6 +12,20 @@ class DayReviewTests(unittest.TestCase):
                 "plan": {
                     "selected_strategies": ["core_hold_momentum_tilt"],
                     "allocations": {"AMZN": 0.1, "MU": 0.1, "GOOGL": 0.15},
+                    "evidence_weights": {"news": 0.5, "market": 0.3, "sec_edgar": 0.2},
+                    "self_evaluation": {
+                        "confidence": 0.72,
+                        "key_risks": ["市场动量反转风险", "公告落地不及预期"],
+                        "counterpoints": ["若宏观走弱，应提高现金"],
+                    },
+                },
+                "llm_audit": {
+                    "validator_warnings": ["cash_buffer_violation_candidate", "top3_cap_applied"],
+                },
+                "retrieval_route": {
+                    "focus_sources": ["positions", "market", "sec_edgar"],
+                    "avoid_sources": [],
+                    "rationale": "当前持仓约束与市场/公告信号更值得优先参考。",
                 },
                 "orders": [
                     {"ticker": "AMZN", "action": "BUY", "shares": 100, "price": 10.0, "amount": 1000.0},
@@ -61,7 +75,20 @@ class DayReviewTests(unittest.TestCase):
         self.assertAlmostEqual(review["execution_lifecycle"]["max_elapsed_sec"], 4.8)
         self.assertEqual(review["execution_lifecycle"]["timeout_cancel_requested_count"], 0)
         self.assertEqual(review["execution_lifecycle"]["status_detail_breakdown"]["filled_complete"], 1)
+        self.assertEqual(review["execution_lifecycle_details"]["problem_orders"], [])
+        self.assertEqual(review["execution_lifecycle_details"]["slowest_orders"][0]["ticker"], "MU")
         self.assertEqual(review["position_changes"][0]["ticker"], "AMZN")
+        self.assertEqual(review["top_evidence_weights"][0]["source"], "news")
+        self.assertAlmostEqual(review["top_evidence_weights"][0]["weight"], 0.5)
+        self.assertAlmostEqual(review["self_evaluation"]["confidence"], 0.72)
+        self.assertEqual(review["validator_warnings"][0], "cash_buffer_violation_candidate")
+        self.assertEqual(review["retrieval_route"]["focus_sources"][0], "positions")
+        self.assertTrue(any("本次决策主要依赖证据" in msg for msg in review["highlights"]))
+        self.assertTrue(any("检索路由优先关注" in msg for msg in review["highlights"]))
+        self.assertTrue(any("模型自评置信度" in msg for msg in review["highlights"]))
+        self.assertTrue(any("模型自评主要风险" in msg for msg in review["highlights"]))
+        self.assertTrue(any("模型给出的反方观点" in msg for msg in review["highlights"]))
+        self.assertTrue(any("规则复核提示" in msg for msg in review["highlights"]))
         self.assertTrue(review["highlights"])
 
     def test_build_day_review_lifecycle_problem_states(self):
@@ -103,8 +130,14 @@ class DayReviewTests(unittest.TestCase):
         self.assertAlmostEqual(review["execution_lifecycle"]["avg_elapsed_sec"], (0.9 + 10.5 + 10.2) / 3)
         self.assertAlmostEqual(review["execution_lifecycle"]["max_elapsed_sec"], 10.5)
         self.assertEqual(review["execution_lifecycle"]["status_detail_breakdown"]["timeout_partial_then_cancelled"], 1)
+        self.assertEqual(len(review["execution_lifecycle_details"]["problem_orders"]), 2)
+        self.assertEqual(review["execution_lifecycle_details"]["problem_orders"][0]["ticker"], "MSFT")
+        self.assertTrue(review["execution_lifecycle_details"]["problem_orders"][0]["timeout_cancel_requested"])
+        self.assertEqual(review["execution_lifecycle_details"]["slowest_orders"][0]["ticker"], "MSFT")
         self.assertTrue(any("执行生命周期摘要" in msg for msg in review["highlights"]))
         self.assertTrue(any("执行时延与异常" in msg for msg in review["highlights"]))
+        self.assertTrue(any("生命周期问题订单" in msg for msg in review["highlights"]))
+        self.assertTrue(any("最慢执行订单" in msg for msg in review["highlights"]))
 
     def test_build_day_review_cost_metrics_without_commission_data(self):
         decision_doc = {
@@ -152,6 +185,38 @@ class DayReviewTests(unittest.TestCase):
         self.assertEqual(review["status"], "planning_only")
         self.assertEqual(review["planning_only_reason"], "live_trading_disabled")
         self.assertIn("本次仅生成计划", review["highlights"][0])
+
+    def test_build_auto_daily_brief_summarizes_cognitive_review_fields(self):
+        review = {
+            "status": "filled",
+            "target_cash_ratio": 0.35,
+            "order_summary": {"planned_order_count": 2},
+            "execution_quality": {"fill_ratio": 0.8},
+            "top_evidence_weights": [
+                {"source": "news", "weight": 0.5},
+                {"source": "market", "weight": 0.3},
+            ],
+            "retrieval_route": {
+                "focus_sources": ["positions", "market", "sec_edgar"],
+            },
+            "self_evaluation": {
+                "confidence": 0.68,
+                "key_risks": ["市场动量回撤风险"],
+            },
+            "validator_warnings": ["cash_buffer_violation_candidate"],
+        }
+        review_summary = {
+            "summary": "本次策略已完成执行，系统基于当日证据完成了从计划到成交的闭环。",
+            "next_steps": ["继续跟踪后续收益表现"],
+        }
+
+        lines = build_auto_daily_brief(review, review_summary)
+
+        self.assertTrue(any("总体结论：" in line for line in lines))
+        self.assertTrue(any("执行概览：" in line for line in lines))
+        self.assertTrue(any("证据侧重点：" in line for line in lines))
+        self.assertTrue(any("风险提示：" in line for line in lines))
+        self.assertTrue(any("后续关注：" in line for line in lines))
 
 
 if __name__ == "__main__":

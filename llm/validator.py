@@ -1,3 +1,5 @@
+from typing import Any
+
 from config import (
     TECH_UNIVERSE,
     MAX_SINGLE_POSITION,
@@ -8,6 +10,28 @@ from config import (
     RISK_EXPOSURE_GROUP_CAPS,
 )
 from strategy_registry import STRATEGY_CATALOG
+
+EVIDENCE_SOURCES = {
+    "macro",
+    "fundamental",
+    "news",
+    "market",
+    "positions",
+    "sec_edgar",
+}
+
+
+def _clean_text_items(value: Any, *, limit: int = 3, max_len: int = 160) -> list[str]:
+    items = value if isinstance(value, list) else []
+    out = []
+    for item in items:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        if len(text) > max_len:
+            text = text[:max_len]
+        out.append(text)
+    return out[: max(int(limit), 0)]
 
 
 def validate_and_clean_strategy_plan(plan: dict) -> tuple[dict, list[str], list[str]]:
@@ -133,18 +157,101 @@ def validate_and_clean_strategy_plan(plan: dict) -> tuple[dict, list[str], list[
         src = item.get("source")
         quote = item.get("quote")
         ticker = item.get("ticker")
+        chunk_id = item.get("chunk_id")
+        url = item.get("url")
+        timestamp = item.get("timestamp")
         if not isinstance(src, str) or not isinstance(quote, str):
             continue
         if len(quote) > 300:
             quote = quote[:300]
         if isinstance(ticker, str) and ticker not in TECH_UNIVERSE:
             ticker = None
-        evidence_clean.append({"source": src, "quote": quote, "ticker": ticker})
+        if chunk_id is not None and not isinstance(chunk_id, str):
+            chunk_id = str(chunk_id)
+        if not isinstance(url, str):
+            url = None
+        elif not (url.startswith("http://") or url.startswith("https://")):
+            url = None
+        if timestamp is not None and not isinstance(timestamp, str):
+            timestamp = str(timestamp)
+        evidence_clean.append(
+            {
+                "source": src,
+                "quote": quote,
+                "ticker": ticker,
+                "chunk_id": chunk_id,
+                "url": url,
+                "timestamp": timestamp,
+            }
+        )
+
+    evidence_weights = plan.get("evidence_weights", {})
+    if evidence_weights is None:
+        evidence_weights = {}
+    if not isinstance(evidence_weights, dict):
+        warnings.append("evidence_weights_not_dict")
+        evidence_weights = {}
+    cleaned_evidence_weights = {}
+    for source, raw_weight in evidence_weights.items():
+        source_key = str(source or "").strip()
+        if source_key not in EVIDENCE_SOURCES:
+            if source_key:
+                warnings.append(f"unknown_evidence_weight_source:{source_key}")
+            continue
+        try:
+            weight = float(raw_weight)
+        except Exception:
+            warnings.append(f"evidence_weight_not_number:{source_key}")
+            continue
+        if weight < 0:
+            warnings.append(f"evidence_weight_negative:{source_key}")
+            continue
+        if weight <= 0:
+            continue
+        cleaned_evidence_weights[source_key] = weight
+
+    total_evidence_weight = sum(cleaned_evidence_weights.values())
+    if total_evidence_weight > 0:
+        cleaned_evidence_weights = {
+            source: weight / total_evidence_weight
+            for source, weight in cleaned_evidence_weights.items()
+        }
+
+    self_evaluation = plan.get("self_evaluation", {})
+    if self_evaluation is None:
+        self_evaluation = {}
+    if not isinstance(self_evaluation, dict):
+        warnings.append("self_evaluation_not_dict")
+        self_evaluation = {}
+    confidence = self_evaluation.get("confidence")
+    confidence_clean = None
+    if confidence is not None:
+        try:
+            confidence_clean = float(confidence)
+            if confidence_clean > 1.0 and confidence_clean <= 100.0:
+                confidence_clean = confidence_clean / 100.0
+                warnings.append("self_evaluation_confidence_pct_normalized")
+            if confidence_clean < 0.0:
+                warnings.append("self_evaluation_confidence_negative")
+                confidence_clean = None
+            elif confidence_clean > 1.0:
+                warnings.append("self_evaluation_confidence_clipped")
+                confidence_clean = 1.0
+        except Exception:
+            warnings.append("self_evaluation_confidence_not_number")
+            confidence_clean = None
+    self_evaluation_clean = {
+        "confidence": confidence_clean,
+        "key_risks": _clean_text_items(self_evaluation.get("key_risks"), limit=3, max_len=160),
+        "counterpoints": _clean_text_items(self_evaluation.get("counterpoints"), limit=3, max_len=160),
+    }
 
     cleaned = {
         "reasoning": reasoning,
         "selected_strategies": selected_clean,
         "allocations": clean_allocations,
         "evidence": evidence_clean,
+        "evidence_weights": cleaned_evidence_weights,
+        "self_evaluation": self_evaluation_clean,
     }
     return cleaned, errors, warnings

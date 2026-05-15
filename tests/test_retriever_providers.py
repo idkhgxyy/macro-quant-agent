@@ -119,12 +119,40 @@ class RetrieverProviderTests(unittest.TestCase):
                 result = self.retriever.fetch_market_data()
 
         self.assertIn("AAPL", result.get("prices", {}))
-        status = self.retriever.get_provider_status().get("market", {})
+        with patch("data.cache.time.time", return_value=1100):
+            status = self.retriever.get_provider_status().get("market", {})
         self.assertEqual(status.get("selected_provider"), "yfinance")
         self.assertEqual(status.get("mode"), "fresh")
         attempts = status.get("attempts", [])
         self.assertTrue(any(x.get("provider") == "alphavantage" and x.get("outcome") == "cooldown" for x in attempts))
         self.assertTrue(any(x.get("provider") == "yfinance" and x.get("outcome") == "success" for x in attempts))
+        providers = {item.get("provider"): item for item in status.get("providers", [])}
+        self.assertTrue(providers["alphavantage"].get("cooldown_active"))
+        self.assertEqual(providers["alphavantage"].get("cooldown_failure_type"), "rate_limit")
+        self.assertEqual(providers["alphavantage"].get("cooldown_detail"), "cooldown")
+
+    def test_fetch_market_data_tracks_last_error_and_last_success_per_provider(self):
+        frame = pd.DataFrame(
+            {ticker: [100.0, 110.0] for ticker in TECH_UNIVERSE},
+            index=["2026-05-01", "2026-05-02"],
+        )
+
+        with patch("data.cache.time.time", return_value=1200):
+            with patch.object(self.retriever, "_fetch_market_data_from_alpha_vantage", side_effect=RuntimeError("av down")):
+                with patch("data.retriever.yf.download", return_value={"Close": frame}):
+                    result = self.retriever.fetch_market_data()
+
+        self.assertIn("AAPL", result.get("prices", {}))
+        with patch("data.cache.time.time", return_value=1200):
+            status = self.retriever.get_provider_status().get("market", {})
+        providers = {item.get("provider"): item for item in status.get("providers", [])}
+        self.assertEqual(status.get("selected_provider"), "yfinance")
+        self.assertEqual(providers["alphavantage"].get("last_error_type"), "unknown")
+        self.assertEqual(providers["alphavantage"].get("last_error_detail"), "av down")
+        self.assertTrue(providers["alphavantage"].get("cooldown_active"))
+        self.assertEqual(providers["yfinance"].get("last_success_detail"), "fresh_fetch")
+        self.assertEqual(providers["yfinance"].get("last_success_mode"), "fresh")
+        self.assertIsInstance(providers["yfinance"].get("last_success_at"), str)
 
     def test_fetch_market_data_reuses_stale_before_daily_refresh_window(self):
         with patch("data.cache.time.time", return_value=1000):
@@ -200,6 +228,12 @@ class RetrieverProviderTests(unittest.TestCase):
         self.assertEqual(status.get("budget_used"), len(TECH_UNIVERSE))
         self.assertEqual(status.get("budget_remaining"), 36 - len(TECH_UNIVERSE))
         self.assertEqual(status.get("budget_state"), "ok")
+        self.assertEqual(status.get("selected_provider_health", {}).get("last_success_detail"), "fresh_fetch")
+        providers = {item.get("provider"): item for item in status.get("providers", [])}
+        self.assertEqual(providers["alphavantage"].get("limit"), 36)
+        self.assertEqual(providers["alphavantage"].get("used"), len(TECH_UNIVERSE))
+        self.assertEqual(providers["alphavantage"].get("state"), "ok")
+        self.assertIsInstance(providers["alphavantage"].get("last_success_at"), str)
 
     def test_fetch_fundamental_data_reuses_stale_before_weekly_refresh_window(self):
         with patch("data.cache.time.time", return_value=1000):
@@ -215,6 +249,160 @@ class RetrieverProviderTests(unittest.TestCase):
         self.assertEqual(status.get("selected_provider"), "stale_cache")
         self.assertEqual(status.get("detail"), "before_weekly_refresh_window")
         self.assertEqual(status.get("age_seconds"), 100.0)
+
+    def test_fetch_filings_from_sec_edgar_parses_recent_target_form(self):
+        def fake_sec_json(url: str):
+            if url == "https://www.sec.gov/files/company_tickers.json":
+                return {
+                    "0": {"ticker": "AAPL", "cik_str": 320193},
+                }
+            if url == "https://data.sec.gov/submissions/CIK0000320193.json":
+                return {
+                    "name": "Apple Inc.",
+                    "filings": {
+                        "recent": {
+                            "form": ["8-K", "4"],
+                            "accessionNumber": ["0000320193-26-000001", "0000320193-26-000099"],
+                            "filingDate": ["2026-05-14", "2026-05-13"],
+                            "primaryDocument": ["aapl-8k.htm", "ownership.xml"],
+                            "acceptanceDateTime": ["2026-05-14T13:30:00.000Z", "2026-05-13T10:00:00.000Z"],
+                        }
+                    },
+                }
+            raise AssertionError(url)
+
+        with patch.object(self.retriever, "_sec_get_json", side_effect=fake_sec_json):
+            with patch.object(self.retriever, "_is_recent_iso_date", return_value=True):
+                result = self.retriever._fetch_filings_from_sec_edgar()
+
+        self.assertEqual(result.get("source"), "sec_edgar_recent_filings")
+        self.assertEqual(len(result.get("evidence", [])), 1)
+        self.assertEqual(result["evidence"][0]["source"], "sec_edgar")
+        self.assertEqual(result["evidence"][0]["ticker"], "AAPL")
+        self.assertEqual(result["evidence"][0]["chunk_id"], "sec:AAPL:8-K:2026-05-14:0")
+        self.assertEqual(
+            result["evidence"][0]["url"],
+            "https://www.sec.gov/Archives/edgar/data/320193/000032019326000001/aapl-8k.htm",
+        )
+        self.assertEqual(result["evidence"][0]["timestamp"], "2026-05-14T13:30:00.000Z")
+        self.assertIn("AAPL: 8-K on 2026-05-14", result["context_string"])
+
+    def test_fetch_filing_data_exposes_budget_and_provider_health_on_success(self):
+        result_payload = {
+            "context_string": "- AAPL: 8-K on 2026-05-14 (Apple Inc.)",
+            "evidence": [
+                {
+                    "source": "sec_edgar",
+                    "ticker": "AAPL",
+                    "quote": "8-K filed on 2026-05-14 for AAPL (Apple Inc.).",
+                    "chunk_id": "sec:AAPL:8-K:2026-05-14:0",
+                    "url": "https://www.sec.gov/Archives/example/aapl-8k.htm",
+                    "timestamp": "2026-05-14T13:30:00Z",
+                }
+            ],
+            "source": "sec_edgar_recent_filings",
+        }
+
+        with patch("data.cache.time.time", return_value=1200):
+            with patch.object(self.retriever, "_fetch_filings_from_sec_edgar", return_value=result_payload):
+                result = self.retriever.fetch_filing_data()
+
+        self.assertEqual(result["context_string"], result_payload["context_string"])
+        status = self.retriever.get_provider_status().get("filing", {})
+        self.assertEqual(status.get("selected_provider"), "sec_edgar")
+        self.assertEqual(status.get("mode"), "fresh")
+        self.assertEqual(status.get("detail"), "fresh_fetch")
+        self.assertEqual(status.get("budget_provider"), "sec_edgar")
+        self.assertEqual(status.get("budget_limit"), 8)
+        self.assertEqual(status.get("budget_cost"), 1)
+        self.assertEqual(status.get("budget_used"), 1)
+        self.assertEqual(status.get("budget_remaining"), 7)
+        self.assertEqual(status.get("budget_state"), "ok")
+        self.assertEqual(status.get("selected_provider_health", {}).get("last_success_detail"), "fresh_fetch")
+        providers = {item.get("provider"): item for item in status.get("providers", [])}
+        self.assertEqual(providers["sec_edgar"].get("limit"), 8)
+        self.assertEqual(providers["sec_edgar"].get("used"), 1)
+        self.assertEqual(providers["sec_edgar"].get("state"), "ok")
+        self.assertEqual(providers["sec_edgar"].get("last_success_mode"), "fresh")
+        self.assertIsInstance(providers["sec_edgar"].get("last_success_at"), str)
+
+    def test_fetch_filing_data_records_empty_filings_as_successful_fresh_fetch(self):
+        result_payload = {
+            "context_string": "近期未发现目标股票的重要 SEC 公告元数据。",
+            "evidence": [],
+            "source": "sec_edgar_recent_filings",
+        }
+
+        with patch("data.cache.time.time", return_value=1200):
+            with patch.object(self.retriever, "_fetch_filings_from_sec_edgar", return_value=result_payload):
+                result = self.retriever.fetch_filing_data()
+
+        self.assertEqual(result["evidence"], [])
+        status = self.retriever.get_provider_status().get("filing", {})
+        self.assertEqual(status.get("selected_provider"), "sec_edgar")
+        self.assertEqual(status.get("mode"), "fresh")
+        self.assertEqual(status.get("detail"), "empty_filings")
+        self.assertEqual(status.get("selected_provider_health", {}).get("last_success_detail"), "empty_filings")
+
+    def test_fetch_filing_data_reuses_stale_when_budget_is_near_limit(self):
+        stale_payload = {
+            "context_string": "- AAPL: stale filing",
+            "evidence": [],
+            "source": "sec_edgar_recent_filings",
+        }
+
+        with patch("data.cache.time.time", return_value=1000):
+            self.retriever.cache.set("filing_data", stale_payload, ttl_seconds=1)
+            self.retriever.cache.set(
+                "budget_filing_sec_edgar",
+                {"window": "daily", "used": 7, "limit": 8, "cost": 1, "provider": "sec_edgar"},
+            )
+
+        with patch("data.cache.time.time", return_value=1100):
+            with patch.object(self.retriever, "_is_ready_for_daily_refresh", return_value=True):
+                with patch.object(
+                    self.retriever,
+                    "_fetch_filings_from_sec_edgar",
+                    side_effect=AssertionError("should not call sec edgar"),
+                ):
+                    result = self.retriever.fetch_filing_data()
+
+        self.assertEqual(result["context_string"], "- AAPL: stale filing")
+        status = self.retriever.get_provider_status().get("filing", {})
+        self.assertEqual(status.get("selected_provider"), "stale_cache")
+        self.assertEqual(status.get("detail"), "budget_near_limit_preserve_quota")
+        self.assertEqual(status.get("budget_provider"), "sec_edgar")
+        self.assertEqual(status.get("budget_state"), "near_limit")
+        self.assertEqual(status.get("budget_used"), 7)
+        self.assertEqual(status.get("age_seconds"), 100.0)
+        self.assertTrue(any(x.get("provider") == "sec_edgar" and x.get("outcome") == "budget_near_limit" for x in status.get("attempts", [])))
+
+    def test_fetch_filing_data_uses_stale_cache_after_provider_failure(self):
+        stale_payload = {
+            "context_string": "- AAPL: stale filing",
+            "evidence": [],
+            "source": "sec_edgar_recent_filings",
+        }
+
+        with patch("data.cache.time.time", return_value=1000):
+            self.retriever.cache.set("filing_data", stale_payload, ttl_seconds=1)
+
+        with patch("data.cache.time.time", return_value=1100):
+            with patch.object(self.retriever, "_is_ready_for_daily_refresh", return_value=True):
+                with patch.object(self.retriever, "_fetch_filings_from_sec_edgar", side_effect=RuntimeError("sec down")):
+                    result = self.retriever.fetch_filing_data()
+
+        self.assertEqual(result["context_string"], "- AAPL: stale filing")
+        with patch("data.cache.time.time", return_value=1100):
+            status = self.retriever.get_provider_status().get("filing", {})
+        self.assertEqual(status.get("selected_provider"), "stale_cache")
+        self.assertEqual(status.get("mode"), "stale_cache")
+        self.assertEqual(status.get("detail"), "fallback_after_provider_failure")
+        self.assertTrue(any(x.get("provider") == "sec_edgar" and x.get("outcome") == "failed" for x in status.get("attempts", [])))
+        providers = {item.get("provider"): item for item in status.get("providers", [])}
+        self.assertEqual(providers["sec_edgar"].get("last_error_detail"), "sec down")
+        self.assertEqual(providers["sec_edgar"].get("last_error_type"), "unknown")
+        self.assertTrue(providers["sec_edgar"].get("cooldown_active"))
 
 
 if __name__ == "__main__":

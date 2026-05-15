@@ -10,7 +10,8 @@ ROOT = os.path.dirname(os.path.dirname(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from utils.review import build_day_review
+from llm.volcengine import build_review_summary_fallback
+from utils.review import build_auto_daily_brief, build_day_review
 from utils.heartbeat import HeartbeatStore
 from utils.kill_switch import KillSwitchStore
 
@@ -182,6 +183,42 @@ def _heartbeat_doc() -> dict:
     return doc
 
 
+def _load_review_sidecar(review_date: Optional[str]) -> Optional[dict]:
+    if not review_date:
+        return None
+    path = os.path.join(ROOT, "reports", f"daily_report_{review_date}.review.json")
+    if not os.path.exists(path):
+        return None
+    try:
+        payload = _read_json(path)
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _build_review_response(
+    *,
+    decision_doc: Optional[dict] = None,
+    ledger_doc: Optional[dict] = None,
+    latest_metric: Optional[dict] = None,
+    review_date: Optional[str] = None,
+) -> dict:
+    review = build_day_review(
+        decision_doc=decision_doc,
+        ledger_doc=ledger_doc,
+        latest_metric=latest_metric,
+    )
+    sidecar = _load_review_sidecar(review_date)
+    sidecar_summary = sidecar.get("review_summary") if isinstance(sidecar, dict) and isinstance(sidecar.get("review_summary"), dict) else None
+    sidecar_auto_brief = sidecar.get("auto_brief") if isinstance(sidecar, dict) and isinstance(sidecar.get("auto_brief"), list) else None
+    review_summary = sidecar_summary or build_review_summary_fallback(review, reason="dashboard_preview")
+    auto_brief = sidecar_auto_brief or build_auto_daily_brief(review, review_summary)
+    review["review_summary"] = review_summary
+    review["auto_brief"] = auto_brief
+    review["review_summary_source"] = "report_sidecar" if sidecar_summary else "fallback"
+    return review
+
+
 class DashboardHandler(SimpleHTTPRequestHandler):
     def translate_path(self, path: str) -> str:
         parsed = urlparse(path)
@@ -239,10 +276,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         if path == "/api/dates":
             snapshots = os.path.join(ROOT, "snapshots")
+            ledger_dir = os.path.join(ROOT, "ledger")
             return self._send_json(
                 {
                     "rag": _list_dates("rag_", snapshots),
                     "decision": _list_dates("decision_", snapshots),
+                    "ledger": _list_dates("execution_", ledger_dir),
                 }
             )
 
@@ -316,12 +355,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
             decision_doc = _read_json(decision_path) if decision_path and os.path.exists(decision_path) else None
             ledger_doc = _read_json(ledger_path) if ledger_path and os.path.exists(ledger_path) else None
+            review = _build_review_response(
+                decision_doc=decision_doc,
+                ledger_doc=ledger_doc,
+                latest_metric=latest_metric,
+                review_date=review_date,
+            )
             return self._send_json(
-                build_day_review(
-                    decision_doc=decision_doc,
-                    ledger_doc=ledger_doc,
-                    latest_metric=latest_metric,
-                )
+                review
             )
 
         if path == "/api/equity":

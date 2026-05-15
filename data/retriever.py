@@ -3,6 +3,7 @@ logger = setup_logger(__name__)
 
 import csv
 from datetime import datetime, timedelta
+import os
 import requests
 import time
 import yfinance as yf
@@ -84,6 +85,121 @@ class RAGRetriever:
         if hasattr(response, "raise_for_status"):
             response.raise_for_status()
         return str(getattr(response, "text", "") or "")
+
+    def _sec_get_json(self, url: str) -> dict:
+        user_agent = str(os.getenv("SEC_EDGAR_USER_AGENT", "isolation-research/0.1 contact@example.com")).strip()
+        headers = {
+            "User-Agent": user_agent,
+            "Accept-Encoding": "gzip, deflate",
+            "Accept": "application/json",
+        }
+        response = retry_call(lambda: requests.get(url, headers=headers, timeout=10), attempts=3, min_wait=0.5, max_wait=4.0)
+        if hasattr(response, "raise_for_status"):
+            response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, dict):
+            raise ValueError("sec_response_not_dict")
+        return data
+
+    @staticmethod
+    def _iter_recent_filing_rows(recent: dict):
+        if not isinstance(recent, dict):
+            return
+        forms = recent.get("form") or []
+        accession_numbers = recent.get("accessionNumber") or []
+        filing_dates = recent.get("filingDate") or []
+        primary_documents = recent.get("primaryDocument") or []
+        acceptance_datetimes = recent.get("acceptanceDateTime") or []
+        size = min(
+            len(forms),
+            len(accession_numbers),
+            len(filing_dates),
+            len(primary_documents),
+            len(acceptance_datetimes) if acceptance_datetimes else len(forms),
+        )
+        for idx in range(size):
+            yield {
+                "form": forms[idx],
+                "accession_number": accession_numbers[idx],
+                "filing_date": filing_dates[idx],
+                "primary_document": primary_documents[idx],
+                "acceptance_datetime": acceptance_datetimes[idx] if acceptance_datetimes else None,
+            }
+
+    @staticmethod
+    def _is_recent_iso_date(date_str: str, max_age_days: int = 60) -> bool:
+        try:
+            filing_dt = datetime.fromisoformat(str(date_str))
+        except Exception:
+            return False
+        age = datetime.utcnow() - filing_dt
+        return age.days <= int(max_age_days)
+
+    def _fetch_filings_from_sec_edgar(self) -> dict:
+        tickers_url = "https://www.sec.gov/files/company_tickers.json"
+        ticker_map = self._sec_get_json(tickers_url)
+        cik_by_ticker = {}
+        for item in ticker_map.values() if isinstance(ticker_map, dict) else []:
+            if not isinstance(item, dict):
+                continue
+            ticker = str(item.get("ticker") or "").upper().strip()
+            cik = item.get("cik_str")
+            try:
+                cik_int = int(cik)
+            except Exception:
+                continue
+            if ticker:
+                cik_by_ticker[ticker] = cik_int
+
+        target_forms = {"8-K", "10-Q", "10-K"}
+        evidence = []
+        lines = []
+        for ticker in TECH_UNIVERSE:
+            cik = cik_by_ticker.get(ticker)
+            if not cik:
+                continue
+            submissions = self._sec_get_json(f"https://data.sec.gov/submissions/CIK{cik:010d}.json")
+            recent = ((submissions.get("filings") or {}).get("recent") or {})
+            company_name = str(submissions.get("name") or ticker)
+            for idx, row in enumerate(self._iter_recent_filing_rows(recent)):
+                form = str(row.get("form") or "").strip().upper()
+                filing_date = str(row.get("filing_date") or "").strip()
+                if form not in target_forms or not self._is_recent_iso_date(filing_date):
+                    continue
+                accession_number = str(row.get("accession_number") or "").strip()
+                accession_nodash = accession_number.replace("-", "")
+                primary_document = str(row.get("primary_document") or "").strip()
+                filing_url = (
+                    f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession_nodash}/{primary_document}"
+                    if accession_nodash and primary_document
+                    else None
+                )
+                timestamp = str(row.get("acceptance_datetime") or filing_date or "")
+                quote = f"{form} filed on {filing_date} for {ticker} ({company_name})."
+                evidence.append(
+                    {
+                        "source": "sec_edgar",
+                        "ticker": ticker,
+                        "quote": quote,
+                        "chunk_id": f"sec:{ticker}:{form}:{filing_date}:{idx}",
+                        "url": filing_url,
+                        "timestamp": timestamp or None,
+                    }
+                )
+                lines.append(f"- {ticker}: {form} on {filing_date} ({company_name})")
+                break
+
+        if not evidence:
+            return {
+                "context_string": "近期未发现目标股票的重要 SEC 公告元数据。",
+                "evidence": [],
+                "source": "sec_edgar_recent_filings",
+            }
+        return {
+            "context_string": "\n".join(lines),
+            "evidence": evidence,
+            "source": "sec_edgar_recent_filings",
+        }
 
     def _fetch_market_data_from_alpha_vantage(self) -> dict:
         if not self.av_key:
@@ -229,6 +345,10 @@ class RAGRetriever:
         return f"neg_{data_kind}_{provider}"
 
     @staticmethod
+    def _provider_state_key(data_kind: str, provider: str) -> str:
+        return f"provider_state_{data_kind}_{provider}"
+
+    @staticmethod
     def _provider_budget_key(data_kind: str, provider: str) -> str:
         return f"budget_{data_kind}_{provider}"
 
@@ -253,6 +373,7 @@ class RAGRetriever:
             ("market", "yfinance"): {"window": "daily", "limit": 24, "cost": 1},
             ("macro", "yfinance"): {"window": "daily", "limit": 24, "cost": 1},
             ("fundamental", "yfinance"): {"window": "daily", "limit": 27, "cost": tech_count},
+            ("filing", "sec_edgar"): {"window": "daily", "limit": 8, "cost": 1},
         }
         cfg = configs.get((data_kind, provider))
         return dict(cfg) if isinstance(cfg, dict) else None
@@ -391,8 +512,133 @@ class RAGRetriever:
             self._provider_cooldown_seconds(data_kind, failure_type),
         )
 
+        self._merge_provider_state(
+            data_kind,
+            provider,
+            {
+                "last_error_at": datetime.utcnow().isoformat() + "Z",
+                "last_error_detail": detail,
+                "last_error_type": failure_type,
+            },
+        )
+
+    def _provider_state_snapshot(self, data_kind: str, provider: str) -> dict:
+        record = self.cache.get_record(self._provider_state_key(data_kind, provider))
+        if not isinstance(record, dict):
+            return {}
+        data = record.get("data")
+        return dict(data) if isinstance(data, dict) else {}
+
+    def _merge_provider_state(self, data_kind: str, provider: str, updates: dict):
+        current = self._provider_state_snapshot(data_kind, provider)
+        payload = {
+            **current,
+            "provider": provider,
+            "data_kind": data_kind,
+        }
+        for key, value in (updates or {}).items():
+            if value is not None:
+                payload[key] = value
+        self.cache.set(
+            self._provider_state_key(data_kind, provider),
+            payload,
+            ttl_seconds=30 * 24 * 60 * 60,
+        )
+        return payload
+
+    def _record_provider_success(self, data_kind: str, provider: str, detail: str, mode: str):
+        self._merge_provider_state(
+            data_kind,
+            provider,
+            {
+                "last_success_at": datetime.utcnow().isoformat() + "Z",
+                "last_success_detail": detail,
+                "last_success_mode": mode,
+            },
+        )
+
+    def _provider_cooldown_snapshot(self, data_kind: str, provider: str) -> dict:
+        record = self.cache.get_record(self._provider_neg_key(data_kind, provider))
+        if not isinstance(record, dict):
+            return {}
+
+        data = record.get("data")
+        payload = dict(data) if isinstance(data, dict) else {}
+        expires_at = record.get("expires_at")
+        remaining = None
+        active = False
+        if isinstance(expires_at, (int, float)):
+            remaining = max(float(expires_at) - time.time(), 0.0)
+            active = remaining > 0
+
+        return {
+            "cooldown_active": active,
+            "cooldown_remaining_sec": round(remaining, 1) if remaining is not None else None,
+            "cooldown_failure_type": payload.get("failure_type"),
+            "cooldown_detail": payload.get("detail"),
+            "cooldown_expires_at": datetime.utcfromtimestamp(float(expires_at)).isoformat() + "Z"
+            if isinstance(expires_at, (int, float))
+            else None,
+        }
+
+    def _provider_candidates(self, data_kind: str) -> list:
+        if data_kind == "news":
+            return ["alphavantage"]
+        if data_kind == "fundamental":
+            return ["alphavantage", "yfinance"]
+        if data_kind == "market":
+            if BROKER_TYPE == "ibkr":
+                return ["ibkr"]
+            return ["alphavantage", "yfinance"]
+        if data_kind == "macro":
+            if BROKER_TYPE == "ibkr":
+                return ["ibkr"]
+            return ["fred", "yfinance"]
+        if data_kind == "filing":
+            return ["sec_edgar"]
+        return []
+
+    def _provider_health_snapshot(self, data_kind: str, provider: str) -> dict:
+        state = self._provider_state_snapshot(data_kind, provider)
+        budget = self._provider_budget_snapshot(data_kind, provider) or {}
+        cooldown = self._provider_cooldown_snapshot(data_kind, provider)
+        return {
+            "provider": provider,
+            "last_success_at": state.get("last_success_at"),
+            "last_success_detail": state.get("last_success_detail"),
+            "last_success_mode": state.get("last_success_mode"),
+            "last_error_at": state.get("last_error_at"),
+            "last_error_detail": state.get("last_error_detail"),
+            "last_error_type": state.get("last_error_type"),
+            **budget,
+            **cooldown,
+        }
+
     def get_provider_status(self) -> dict:
-        return dict(self._provider_status)
+        enriched = {}
+        for data_kind, trace in self._provider_status.items():
+            trace_copy = dict(trace)
+            attempts = list(trace.get("attempts", [])) if isinstance(trace.get("attempts"), list) else []
+            trace_copy["attempts"] = attempts
+
+            candidates = set(self._provider_candidates(data_kind))
+            for attempt in attempts:
+                provider = str(attempt.get("provider") or "").strip()
+                if provider and provider not in {"cache", "stale_cache", "none"}:
+                    candidates.add(provider)
+
+            providers = [
+                self._provider_health_snapshot(data_kind, provider)
+                for provider in sorted(candidates)
+            ]
+            trace_copy["providers"] = providers
+
+            selected_provider = str(trace_copy.get("selected_provider") or "").strip()
+            if selected_provider and selected_provider not in {"cache", "stale_cache", "none"}:
+                trace_copy["selected_provider_health"] = self._provider_health_snapshot(data_kind, selected_provider)
+
+            enriched[data_kind] = trace_copy
+        return enriched
 
     @staticmethod
     def _now_market_time():
@@ -488,6 +734,9 @@ class RAGRetriever:
     @staticmethod
     def _cache_ttl_for_fundamental() -> int:
         return 7 * 24 * 60 * 60
+
+    def _cache_ttl_for_filings(self) -> int:
+        return max(min(self._seconds_until_next_market_refresh(), 24 * 60 * 60), 6 * 60 * 60)
         
     def fetch_news(self) -> str:
         """获取宏观/科技新闻"""
@@ -538,12 +787,14 @@ class RAGRetriever:
                     if "feed" not in data:
                         self._trace_provider_attempt("news", "alphavantage", "success", "empty_feed")
                         self._finish_provider_trace("news", "alphavantage", "fresh", "empty_feed")
+                        self._record_provider_success("news", "alphavantage", "empty_feed", "fresh")
                         return "今日暂无重大宏观新闻发布。"
                     news_items = [f"标题: {item.get('title', '')}\n摘要: {item.get('summary', '')}" for item in data["feed"]]
                     result = "\n\n".join(news_items)
                     self.cache.set("news", result, ttl_seconds=self._cache_ttl_for_news())
                     self._trace_provider_attempt("news", "alphavantage", "success", "fresh_fetch")
                     self._finish_provider_trace("news", "alphavantage", "fresh", "fresh_fetch")
+                    self._record_provider_success("news", "alphavantage", "fresh_fetch", "fresh")
                     emit_event("data.news", "INFO", "ok", "fetched", {"provider": "alphavantage"})
                     return result
                 except Exception as e:
@@ -599,6 +850,7 @@ class RAGRetriever:
                         self.cache.set(cache_key, result, ttl_seconds=self._cache_ttl_for_market())
                         self._trace_provider_attempt("market", "ibkr", "success", "fresh_fetch")
                         self._finish_provider_trace("market", "ibkr", "fresh", "fresh_fetch")
+                        self._record_provider_success("market", "ibkr", "fresh_fetch", "fresh")
                         emit_event("data.market", "INFO", "ok", "fetched", {"provider": "ibkr"})
                         return result
                     logger.warning("⚠️ IBKR 行情返回为空，将回退到本地兜底价格。")
@@ -650,6 +902,7 @@ class RAGRetriever:
                         self.cache.set(cache_key, result, ttl_seconds=self._cache_ttl_for_market())
                         self._trace_provider_attempt("market", "alphavantage", "success", "fresh_fetch")
                         self._finish_provider_trace("market", "alphavantage", "fresh", "fresh_fetch")
+                        self._record_provider_success("market", "alphavantage", "fresh_fetch", "fresh")
                         emit_event("data.market", "INFO", "ok", "fetched", {"provider": "alphavantage"})
                         return result
                     except Exception as e:
@@ -697,6 +950,7 @@ class RAGRetriever:
                     self.cache.set(cache_key, result, ttl_seconds=self._cache_ttl_for_market())
                     self._trace_provider_attempt("market", "yfinance", "success", "fresh_fetch")
                     self._finish_provider_trace("market", "yfinance", "fresh", "fresh_fetch")
+                    self._record_provider_success("market", "yfinance", "fresh_fetch", "fresh")
                     emit_event("data.market", "INFO", "ok", "fetched", {"provider": "yfinance"})
                     return result
                 except Exception as e:
@@ -756,6 +1010,7 @@ class RAGRetriever:
                     self.cache.set(cache_key, macro_str, ttl_seconds=self._cache_ttl_for_macro())
                     self._trace_provider_attempt("macro", "ibkr", "success", "fresh_fetch")
                     self._finish_provider_trace("macro", "ibkr", "fresh", "fresh_fetch")
+                    self._record_provider_success("macro", "ibkr", "fresh_fetch", "fresh")
                     emit_event("data.macro", "INFO", "ok", "fetched", {"provider": "ibkr"})
                     return macro_str
                 except Exception as e:
@@ -799,6 +1054,7 @@ class RAGRetriever:
                     self.cache.set(cache_key, macro_info, ttl_seconds=self._cache_ttl_for_macro())
                     self._trace_provider_attempt("macro", "fred", "success", "fresh_fetch")
                     self._finish_provider_trace("macro", "fred", "fresh", "fresh_fetch")
+                    self._record_provider_success("macro", "fred", "fresh_fetch", "fresh")
                     emit_event("data.macro", "INFO", "ok", "fetched", {"provider": "fred"})
                     return macro_info
                 except Exception as e:
@@ -840,6 +1096,7 @@ class RAGRetriever:
                     self.cache.set(cache_key, macro_info, ttl_seconds=self._cache_ttl_for_macro())
                     self._trace_provider_attempt("macro", "yfinance", "success", "fresh_fetch")
                     self._finish_provider_trace("macro", "yfinance", "fresh", "fresh_fetch")
+                    self._record_provider_success("macro", "yfinance", "fresh_fetch", "fresh")
                     emit_event("data.macro", "INFO", "ok", "fetched", {"provider": "yfinance"})
                     return macro_info
                 except Exception as e:
@@ -907,6 +1164,7 @@ class RAGRetriever:
                         self.cache.set("fundamental_data_v2", result, ttl_seconds=self._cache_ttl_for_fundamental())
                         self._trace_provider_attempt("fundamental", "alphavantage", "success", "fresh_fetch")
                         self._finish_provider_trace("fundamental", "alphavantage", "fresh", "fresh_fetch")
+                        self._record_provider_success("fundamental", "alphavantage", "fresh_fetch", "fresh")
                         emit_event("data.fundamental", "INFO", "ok", "fetched", {"provider": "alphavantage"})
                         return result
                     except Exception as e:
@@ -955,6 +1213,7 @@ class RAGRetriever:
                     self.cache.set("fundamental_data_v2", result, ttl_seconds=self._cache_ttl_for_fundamental())
                     self._trace_provider_attempt("fundamental", "yfinance", "success", "fresh_fetch")
                     self._finish_provider_trace("fundamental", "yfinance", "fresh", "fresh_fetch")
+                    self._record_provider_success("fundamental", "yfinance", "fresh_fetch", "fresh")
                     emit_event("data.fundamental", "INFO", "ok", "fetched", {"provider": "yfinance"})
                     return result
                 except Exception as e:
@@ -973,3 +1232,75 @@ class RAGRetriever:
             return stale
         self._finish_provider_trace("fundamental", "none", "degraded", "no_provider_available")
         return "基本面数据获取失败，假设各公司估值处于行业平均水平。"
+
+    def fetch_filing_data(self) -> dict:
+        """获取 SEC EDGAR 公告元数据证据"""
+        self._start_provider_trace("filing")
+        cache_key = "filing_data"
+        cached_data = self.cache.get(cache_key)
+        if cached_data:
+            logger.info("📄 [RAG 检索] 读取本地缓存的 SEC EDGAR 公告数据...")
+            cache_age = self._stale_age_seconds(cache_key)
+            self._trace_provider_attempt("filing", "cache", "hit", "fresh_cache")
+            self._finish_provider_trace("filing", "cache", "cache_hit", "fresh_cache")
+            self._set_provider_trace_meta("filing", age_seconds=round(float(cache_age), 1) if cache_age is not None else None)
+            return cached_data
+
+        planned_stale = self._planned_stale_reuse(
+            "filing",
+            cache_key,
+            cadence="daily",
+            max_age_seconds=14 * 24 * 60 * 60,
+            detail="before_daily_refresh_window",
+        )
+        if planned_stale is not None:
+            return planned_stale
+
+        budget_stale = self._budget_aware_stale_reuse(
+            "filing",
+            "sec_edgar",
+            cache_key,
+            max_age_seconds=14 * 24 * 60 * 60,
+            detail="budget_near_limit_preserve_quota",
+        )
+        if budget_stale is not None:
+            return budget_stale
+
+        neg = self._provider_cooldown_reason("filing", "sec_edgar")
+        if neg:
+            logger.warning(f"📄 [RAG 检索] SEC EDGAR 公告源仍在冷却中，先跳过: {neg}")
+            self._trace_provider_attempt("filing", "sec_edgar", "cooldown", str(neg))
+        else:
+            if not self._consume_provider_budget("filing", "sec_edgar"):
+                logger.warning("📄 [RAG 检索] SEC EDGAR 日预算已耗尽，先跳过本轮请求。")
+            else:
+                logger.info("📄 [RAG 检索] 正在通过 SEC EDGAR 获取近期公告元数据...")
+                try:
+                    result = self._fetch_filings_from_sec_edgar()
+                    self.cache.set(cache_key, result, ttl_seconds=self._cache_ttl_for_filings())
+                    detail = "empty_filings" if not (result.get("evidence") or []) else "fresh_fetch"
+                    self._trace_provider_attempt("filing", "sec_edgar", "success", detail)
+                    self._finish_provider_trace("filing", "sec_edgar", "fresh", detail)
+                    self._record_provider_success("filing", "sec_edgar", detail, "fresh")
+                    emit_event("data.filing", "INFO", "ok", "fetched", {"provider": "sec_edgar"})
+                    return result
+                except Exception as e:
+                    failure_type = classify_exception(e)
+                    self._trace_provider_attempt("filing", "sec_edgar", "failed", str(e), failure_type=failure_type)
+                    self._activate_provider_cooldown("filing", "sec_edgar", failure_type, str(e))
+                    emit_event("data.filing", "ERROR", failure_type, str(e), {"provider": "sec_edgar"})
+
+        stale = self._fallback_to_stale(cache_key, "📄 [RAG 检索] SEC EDGAR 请求失败，回退到最近一次成功的公告缓存。")
+        if stale is not None:
+            stale_age = self._stale_age_seconds(cache_key)
+            self._trace_provider_attempt("filing", "stale_cache", "hit", "stale_fallback")
+            self._finish_provider_trace("filing", "stale_cache", "stale_cache", "fallback_after_provider_failure")
+            self._set_provider_trace_meta("filing", age_seconds=round(float(stale_age), 1) if stale_age is not None else None)
+            return stale
+
+        self._finish_provider_trace("filing", "none", "degraded", "no_provider_available")
+        return {
+            "context_string": "SEC EDGAR 公告证据暂不可用。",
+            "evidence": [],
+            "source": "sec_edgar_recent_filings",
+        }

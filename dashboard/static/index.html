@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Isolation Dashboard</title>
+    <title>Isolation 控制台</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -16,7 +16,7 @@
         <div class="mark">I</div>
         <div class="title">
           <div class="name">Isolation</div>
-          <div class="sub">LLM Quant Ops Console</div>
+          <div class="sub" data-i18n="brand.sub">LLM 量化运行控制台</div>
         </div>
       </div>
       <div class="meta" id="meta">
@@ -31,25 +31,25 @@
       <section class="grid">
         <div class="card hero">
           <div class="card-hd">
-            <div class="card-title">Equity</div>
-            <div class="card-note">cash + positions_value（以当日 RAG 市价估算）</div>
+            <div class="card-title" data-i18n="hero.title">权益曲线</div>
+            <div class="card-note" data-i18n="hero.note">现金 + 持仓市值（按当日 RAG 市价估算）</div>
           </div>
           <div class="chart" id="chart-equity"></div>
           <div class="kpi-row">
             <div class="kpi">
-              <div class="k">Latest Equity</div>
+              <div class="k" data-i18n="hero.kpi.equity">最新权益</div>
               <div class="v" id="kpi-equity">—</div>
             </div>
             <div class="kpi">
-              <div class="k">Cash</div>
+              <div class="k" data-i18n="hero.kpi.cash">现金</div>
               <div class="v" id="kpi-cash">—</div>
             </div>
             <div class="kpi">
-              <div class="k">Positions Value</div>
+              <div class="k" data-i18n="hero.kpi.positions">持仓市值</div>
               <div class="v" id="kpi-pos">—</div>
             </div>
             <div class="kpi">
-              <div class="k">Turnover</div>
+              <div class="k" data-i18n="hero.kpi.turnover">换手率</div>
               <div class="v" id="kpi-turnover">—</div>
             </div>
           </div>
@@ -57,20 +57,20 @@
 
         <div class="card">
           <div class="card-hd">
-            <div class="card-title">Runtime</div>
-            <div class="card-note">heartbeat / scheduler / kill switch</div>
+            <div class="card-title" data-i18n="runtime.title">运行态</div>
+            <div class="card-note" data-i18n="runtime.note">心跳 / 调度器 / 熔断锁</div>
           </div>
           <div class="strategy">
             <div class="block">
-              <div class="label">Highlights</div>
+              <div class="label" data-i18n="runtime.summary">运行摘要</div>
               <div class="list" id="list-runtime-highlights"></div>
             </div>
             <div class="block">
-              <div class="label">Provider Health</div>
+              <div class="label" data-i18n="runtime.providers">数据源健康</div>
               <div class="list" id="list-provider-health"></div>
             </div>
             <div class="block">
-              <div class="label">State File</div>
+              <div class="label" data-i18n="runtime.stateFile">状态文件</div>
               <pre class="mono" id="text-heartbeat">—</pre>
             </div>
           </div>
@@ -78,37 +78,37 @@
 
         <div class="card">
           <div class="card-hd">
-            <div class="card-title">Portfolio</div>
-            <div class="card-note">最新持仓（shares / value / weight）</div>
+            <div class="card-title" data-i18n="positions.title">组合持仓</div>
+            <div class="card-note" data-i18n="positions.note">最新持仓（shares / value / weight）</div>
           </div>
           <div class="table" id="table-positions"></div>
         </div>
 
         <div class="card">
           <div class="card-hd">
-            <div class="card-title">Strategy</div>
-            <div class="card-note">LLM reasoning / allocations / evidence</div>
+            <div class="card-title" data-i18n="strategy.title">策略</div>
+            <div class="card-note" data-i18n="strategy.note">LLM 推理 / 配置权重 / 证据</div>
           </div>
           <div class="strategy">
             <div class="block">
-              <div class="label">Selected Strategies</div>
+              <div class="label" data-i18n="strategy.selected">已选策略</div>
               <div class="chips" id="chips-strategies"></div>
             </div>
             <div class="block">
-              <div class="label">Reasoning</div>
+              <div class="label" data-i18n="strategy.reasoning">推理说明</div>
               <pre class="mono" id="text-reasoning">—</pre>
             </div>
             <div class="block">
-              <div class="label">LLM Audit Trail</div>
+              <div class="label" data-i18n="strategy.audit">LLM 审计轨迹</div>
               <pre class="mono audit" id="text-llm-audit">—</pre>
             </div>
             <div class="block split">
               <div>
-                <div class="label">Allocations</div>
+                <div class="label" data-i18n="strategy.allocations">目标权重</div>
                 <div class="table" id="table-allocations"></div>
               </div>
               <div>
-                <div class="label">Evidence</div>
+                <div class="label" data-i18n="strategy.evidence">证据</div>
                 <div class="list" id="list-evidence"></div>
               </div>
             </div>
@@ -117,24 +117,28 @@
 
         <div class="card">
           <div class="card-hd">
-            <div class="card-title">Execution</div>
-            <div class="card-note">orders / execution_report / reconcile</div>
+            <div class="card-title" data-i18n="execution.title">执行</div>
+            <div class="card-note" data-i18n="execution.note">订单 / 执行回报 / 对账</div>
           </div>
           <div class="exec">
             <div class="block">
-              <div class="label">Orders</div>
+              <div class="label" data-i18n="execution.orders">订单计划</div>
               <div class="table" id="table-orders"></div>
             </div>
             <div class="block">
-              <div class="label">Lifecycle Summary</div>
+              <div class="label" data-i18n="execution.lifecycle">生命周期摘要</div>
               <div class="list" id="list-exec-lifecycle"></div>
             </div>
             <div class="block">
-              <div class="label">Execution Report</div>
+              <div class="label" data-i18n="execution.lifecycleDetails">生命周期明细</div>
+              <div class="list" id="list-exec-lifecycle-details"></div>
+            </div>
+            <div class="block">
+              <div class="label" data-i18n="execution.report">执行回报</div>
               <div class="table" id="table-exec"></div>
             </div>
             <div class="block">
-              <div class="label">Reconciliation</div>
+              <div class="label" data-i18n="execution.reconcile">对账结果</div>
               <pre class="mono" id="text-reconcile">—</pre>
             </div>
           </div>
@@ -142,25 +146,51 @@
 
         <div class="card">
           <div class="card-hd">
-            <div class="card-title">Review</div>
-            <div class="card-note">daily attribution preview / execution quality / position changes</div>
+            <div class="card-title" data-i18n="review.title">复盘</div>
+            <div class="card-note" data-i18n="review.note">日报归因预览 / 执行质量 / 仓位变化</div>
           </div>
           <div class="strategy">
             <div class="block">
-              <div class="label">Highlights</div>
+              <div class="label" data-i18n="review.highlights">复盘摘要</div>
               <div class="list" id="list-review-highlights"></div>
             </div>
             <div class="block">
-              <div class="label">Execution Quality</div>
+              <div class="label" data-i18n="review.autoBrief">自动简报</div>
+              <div class="list" id="list-review-auto-brief"></div>
+            </div>
+            <div class="block">
+              <div class="label" data-i18n="review.llm">LLM 复盘</div>
+              <div class="list" id="list-review-llm-summary"></div>
+            </div>
+            <div class="block split">
+              <div>
+                <div class="label" data-i18n="review.evidenceWeights">证据权重</div>
+                <div class="list" id="list-review-evidence-weights"></div>
+              </div>
+              <div>
+                <div class="label" data-i18n="review.retrievalRoute">检索路由</div>
+                <div class="list" id="list-review-retrieval-route"></div>
+              </div>
+            </div>
+            <div class="block">
+              <div class="label" data-i18n="review.selfEval">模型自评</div>
+              <div class="list" id="list-review-self-eval"></div>
+            </div>
+            <div class="block">
+              <div class="label" data-i18n="review.wouldSubmit">拟提交订单预览</div>
+              <div class="list" id="list-review-would-submit"></div>
+            </div>
+            <div class="block">
+              <div class="label" data-i18n="review.executionQuality">执行质量</div>
               <div class="list" id="list-execution-quality"></div>
             </div>
             <div class="block split">
               <div>
-                <div class="label">Attribution Preview</div>
+                <div class="label" data-i18n="review.summaryPreview">归因预览</div>
                 <pre class="mono" id="text-review-summary">—</pre>
               </div>
               <div>
-                <div class="label">Position Changes</div>
+                <div class="label" data-i18n="review.positionChanges">仓位变化</div>
                 <div class="table" id="table-review-changes"></div>
               </div>
             </div>
@@ -169,20 +199,30 @@
 
         <div class="card">
           <div class="card-hd">
-            <div class="card-title">Compare</div>
-            <div class="card-note">对比当前回放日期与另一历史日期的状态、策略和持仓变化</div>
+            <div class="card-title" data-i18n="compare.title">多日对比</div>
+            <div class="card-note" data-i18n="compare.note">对比当前回放日期与另一历史日期的状态、策略和持仓变化</div>
           </div>
           <div class="strategy">
             <div class="block">
-              <div class="label">Summary</div>
+              <div class="label" data-i18n="compare.summary">对比摘要</div>
               <pre class="mono" id="text-compare-summary">—</pre>
             </div>
             <div class="block">
-              <div class="label">Strategy Delta</div>
+              <div class="label" data-i18n="compare.strategyDiff">策略差异</div>
               <div class="list" id="list-compare-strategies"></div>
             </div>
+            <div class="block split">
+              <div>
+                <div class="label" data-i18n="compare.cognitiveDiff">认知差异</div>
+                <div class="list" id="list-compare-cognitive"></div>
+              </div>
+              <div>
+                <div class="label" data-i18n="compare.selfEvalDiff">自评差异</div>
+                <div class="list" id="list-compare-self-eval"></div>
+              </div>
+            </div>
             <div class="block">
-              <div class="label">Position Delta</div>
+              <div class="label" data-i18n="compare.positionDiff">仓位差异</div>
               <div class="table" id="table-compare-positions"></div>
             </div>
           </div>
@@ -190,16 +230,16 @@
 
         <div class="card">
           <div class="card-hd">
-            <div class="card-title">Alerts</div>
-            <div class="card-note">alerts.jsonl（最新 200 条）</div>
+            <div class="card-title" data-i18n="alerts.title">告警</div>
+            <div class="card-note" data-i18n="alerts.note">alerts.jsonl（最新 200 条）</div>
           </div>
           <div class="list tall" id="list-alerts"></div>
         </div>
 
         <div class="card">
           <div class="card-hd">
-            <div class="card-title">System Log</div>
-            <div class="card-note">trading_system.log（尾部）</div>
+            <div class="card-title" data-i18n="logs.title">系统日志</div>
+            <div class="card-note" data-i18n="logs.note">trading_system.log（尾部）</div>
           </div>
           <pre class="mono tall" id="text-log">—</pre>
         </div>
@@ -208,23 +248,24 @@
 
     <footer class="foot">
       <div class="foot-inner">
-        <div class="foot-note">Local dashboard for inspection & replay. No trading controls exposed.</div>
+        <div class="foot-note" data-i18n="foot.note">本地巡检与回放面板，不暴露任何交易控制。</div>
         <div class="foot-actions">
           <label class="control-group" for="select-date">
-            <span class="control-label">Replay Date</span>
+            <span class="control-label" data-i18n="controls.replayDate">回放日期</span>
             <select class="select" id="select-date">
-              <option value="">Latest</option>
+              <option value="">最新</option>
             </select>
           </label>
           <label class="control-group" for="select-compare-date">
-            <span class="control-label">Compare To</span>
+            <span class="control-label" data-i18n="controls.compareDate">对比日期</span>
             <select class="select" id="select-compare-date">
-              <option value="">Off</option>
+              <option value="">关闭</option>
             </select>
           </label>
-          <button class="btn" id="btn-date-latest">Latest</button>
-          <button class="btn" id="btn-compare-clear">Clear Compare</button>
-          <button class="btn" id="btn-refresh">Refresh</button>
+          <button class="btn" id="btn-date-latest" data-i18n="controls.latest">最新</button>
+          <button class="btn" id="btn-compare-clear" data-i18n="controls.clearCompare">清除对比</button>
+          <button class="btn" id="btn-refresh" data-i18n="controls.refresh">刷新</button>
+          <button class="btn" id="btn-lang-toggle">EN</button>
         </div>
       </div>
     </footer>

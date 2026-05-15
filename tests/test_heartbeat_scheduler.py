@@ -3,7 +3,10 @@ import socket
 import tempfile
 import unittest
 from datetime import datetime
+from unittest.mock import patch
 
+import run_agent
+import run_scheduler
 from run_scheduler import (
     compute_next_run_at,
     has_active_daily_run,
@@ -154,6 +157,101 @@ class SchedulerTimingTests(unittest.TestCase):
             resolve_last_run_date("2026-05-03", "2026-05-04", failed=False),
             "2026-05-04",
         )
+
+
+class SchedulerIntegrationTests(unittest.TestCase):
+    def test_scheduler_recovers_stale_current_before_exiting(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            heartbeat_path = os.path.join(tmpdir, "heartbeat.json")
+            store = HeartbeatStore(path=heartbeat_path, recent_limit=5)
+            run = store.start_run(
+                run_mode="scheduled",
+                date_str="2026-05-14",
+                broker="mock",
+                live_trading_enabled=False,
+            )
+            doc = store.load()
+            doc["current"]["pid"] = 999999
+            doc["current"]["host"] = socket.gethostname()
+            store.save(doc)
+
+            sleep_calls = {"count": 0}
+
+            def fake_sleep(_seconds):
+                sleep_calls["count"] += 1
+                raise KeyboardInterrupt()
+
+            with patch.dict(
+                os.environ,
+                {
+                    "HEARTBEAT_STATE_PATH": heartbeat_path,
+                    "RUNTIME_STATE_DIR": tmpdir,
+                },
+                clear=False,
+            ), patch.object(run_scheduler, "AGENT_SCHEDULER_ENABLED", True), patch.object(
+                run_scheduler, "AGENT_SCHEDULE_TIMEZONE", "UTC"
+            ), patch.object(run_scheduler, "AGENT_SCHEDULE_TIME", "16:10"), patch.object(
+                run_scheduler, "AGENT_SCHEDULE_POLL_SECONDS", 5
+            ), patch.object(
+                run_scheduler.time, "sleep", side_effect=fake_sleep
+            ):
+                run_scheduler.main()
+
+            recovered = store.load()
+            self.assertEqual(sleep_calls["count"], 1)
+            self.assertIsNone(recovered["current"])
+            self.assertEqual(recovered["last_run"]["run_id"], run["run_id"])
+            self.assertEqual(recovered["last_run"]["status"], "stale_recovered")
+            self.assertEqual(recovered["scheduler"]["loop_status"], "stopped")
+
+    def test_scheduler_marks_day_triggered_when_run_agent_reports_already_running(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            heartbeat_path = os.path.join(tmpdir, "heartbeat.json")
+            statuses = []
+            real_update_scheduler = HeartbeatStore.update_scheduler
+
+            def record_update(self, **kwargs):
+                statuses.append(str(kwargs.get("loop_status") or ""))
+                return real_update_scheduler(self, **kwargs)
+
+            class FixedDateTime(datetime):
+                @classmethod
+                def now(cls, tz=None):
+                    base = datetime.fromisoformat("2026-05-14T16:10:05+00:00")
+                    if tz is None:
+                        return base.replace(tzinfo=None)
+                    return base.astimezone(tz)
+
+            def fake_sleep(_seconds):
+                raise KeyboardInterrupt()
+
+            with patch.dict(
+                os.environ,
+                {
+                    "HEARTBEAT_STATE_PATH": heartbeat_path,
+                    "RUNTIME_STATE_DIR": tmpdir,
+                },
+                clear=False,
+            ), patch.object(run_scheduler, "AGENT_SCHEDULER_ENABLED", True), patch.object(
+                run_scheduler, "AGENT_SCHEDULE_TIMEZONE", "UTC"
+            ), patch.object(run_scheduler, "AGENT_SCHEDULE_TIME", "16:10"), patch.object(
+                run_scheduler, "AGENT_SCHEDULE_POLL_SECONDS", 5
+            ), patch.object(
+                HeartbeatStore, "update_scheduler", new=record_update
+            ), patch.object(
+                run_agent, "main", return_value={"status": "already_running"}
+            ), patch.object(
+                run_scheduler.time, "sleep", side_effect=fake_sleep
+            ), patch.object(
+                run_scheduler, "datetime", FixedDateTime
+            ):
+                run_scheduler.main()
+
+            doc = HeartbeatStore(path=heartbeat_path, recent_limit=5).load()
+            self.assertIn("triggering", statuses)
+            self.assertIn("blocked", statuses)
+            self.assertEqual(doc["scheduler"]["last_run_date"], "2026-05-14")
+            self.assertEqual(doc["scheduler"]["loop_status"], "stopped")
 
 
 if __name__ == "__main__":

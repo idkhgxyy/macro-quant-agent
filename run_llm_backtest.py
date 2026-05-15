@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 from datetime import datetime
-from config import TECH_UNIVERSE, VOLCENGINE_API_KEY, VOLCENGINE_MODEL_ENDPOINT
+from config import TECH_UNIVERSE, VOLCENGINE_API_KEY, VOLCENGINE_MODEL_ENDPOINT, LLM_BASE_URL
 from llm.volcengine import VolcengineLLMClient
 from backtest.engine import VectorizedBacktester
 from data.snapshot_db import SnapshotDB
@@ -144,7 +144,7 @@ def main():
         f"📅 回测区间: {test_dates[0].date()} 至 {test_dates[-1].date()} "
         f"({len(test_dates)} 个交易日, 价格来源: {price_source}, 周期: {price_period})"
     )
-    llm_client = VolcengineLLMClient(VOLCENGINE_API_KEY, VOLCENGINE_MODEL_ENDPOINT)
+    llm_client = VolcengineLLMClient(VOLCENGINE_API_KEY, VOLCENGINE_MODEL_ENDPOINT, base_url=LLM_BASE_URL)
     daily_weights_list = []
     snapshot_found_days = 0
     snapshot_missing_dates = []

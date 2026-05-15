@@ -42,6 +42,45 @@ def get_submission_guard_reason(broker_type: str, enable_live_trading: bool) -> 
     return None
 
 
+def _format_retrieval_route_context(route: dict) -> str:
+    if not isinstance(route, dict):
+        return ""
+    focus_sources = route.get("focus_sources") if isinstance(route.get("focus_sources"), list) else []
+    avoid_sources = route.get("avoid_sources") if isinstance(route.get("avoid_sources"), list) else []
+    rationale = str(route.get("rationale") or "").strip()
+    parts = []
+    if focus_sources:
+        parts.append("优先关注: " + ", ".join(str(x) for x in focus_sources))
+    if avoid_sources:
+        parts.append("降低权重: " + ", ".join(str(x) for x in avoid_sources))
+    if rationale:
+        parts.append("原因: " + rationale)
+    return "；".join(parts)
+
+
+def _build_would_submit_preview(orders: list[dict], *, market_session: Optional[dict] = None) -> list[dict]:
+    market_session = market_session if isinstance(market_session, dict) else {}
+    session_label = str(market_session.get("label") or market_session.get("market_state") or "unknown")
+    can_place_orders = bool(market_session.get("can_place_orders"))
+    preview = []
+    for order in orders or []:
+        if not isinstance(order, dict):
+            continue
+        preview.append(
+            {
+                "ticker": str(order.get("ticker") or ""),
+                "action": str(order.get("action") or ""),
+                "shares": int(order.get("shares") or 0),
+                "price": float(order.get("price") or 0.0),
+                "amount": float(order.get("amount") or 0.0),
+                "outside_rth": bool(ALLOW_OUTSIDE_RTH),
+                "market_session": session_label,
+                "market_orders_currently_allowed": can_place_orders,
+            }
+        )
+    return preview
+
+
 class MacroQuantAgent:
     """系统的核心组装器：调度 Data、LLM 和 Execution 层"""
     def __init__(
@@ -188,6 +227,7 @@ class MacroQuantAgent:
             fundamental_data = self.retriever.fetch_fundamental_data()
             news_data = self.retriever.fetch_news()
             market_data_dict = self.retriever.fetch_market_data()
+            filing_data = self.retriever.fetch_filing_data()
             metrics["rag_sec"] = round(time.perf_counter() - t_rag0, 6)
             provider_status = self.retriever.get_provider_status()
             metrics["provider_status"] = provider_status
@@ -195,6 +235,7 @@ class MacroQuantAgent:
             
             market_context_str = market_data_dict["context_string"]
             current_prices = market_data_dict["prices"]
+            filing_context_str = filing_data.get("context_string", "") if isinstance(filing_data, dict) else str(filing_data)
             
             if not current_prices:
                 logger.warning("❌ 无法获取最新价格，今日暂停调仓。")
@@ -202,17 +243,6 @@ class MacroQuantAgent:
                 status = "abort_no_prices"
                 return
 
-            SnapshotDB().save_rag(
-                date_str=date_str,
-                payload={
-                    "macro": macro_data,
-                    "fundamental": fundamental_data,
-                    "news": news_data,
-                    "market": market_data_dict,
-                    "provider_status": provider_status,
-                },
-            )
-                
             # 组装当前持仓信息喂给 LLM
             portfolio_value = self.cash
             for ticker, shares in self.positions.items():
@@ -224,6 +254,30 @@ class MacroQuantAgent:
                 weight = val / portfolio_value if portfolio_value > 0 else 0
                 current_summary.append(f"{ticker}: {shares}股, 价值 ${val:,.2f} ({weight*100:.1f}%)")
             current_positions_str = "\n".join(current_summary)
+            retrieval_route = self.llm.generate_retrieval_route(
+                news_context=news_data,
+                market_context=market_context_str,
+                macro_context=macro_data,
+                fundamental_context=fundamental_data,
+                current_positions_summary=current_positions_str,
+                filing_context=filing_context_str,
+                provider_status=provider_status,
+                mode=self.run_mode,
+            )
+            retrieval_route_context = _format_retrieval_route_context(retrieval_route)
+
+            SnapshotDB().save_rag(
+                date_str=date_str,
+                payload={
+                    "macro": macro_data,
+                    "fundamental": fundamental_data,
+                    "news": news_data,
+                    "market": market_data_dict,
+                    "filings": filing_data,
+                    "provider_status": provider_status,
+                    "retrieval_route": retrieval_route,
+                },
+            )
                 
             logger.info("-" * 60)
             logger.info("📂 【RAG 组装完毕的小抄资料】")
@@ -232,11 +286,21 @@ class MacroQuantAgent:
             logger.info(f"【基本面数据】:\n{fundamental_data}\n")
             logger.info(f"【市场数据】:\n{market_context_str}\n")
             logger.info(f"【新闻摘要】:\n{news_data[:200]}...\n")
+            logger.info(f"【SEC 公告证据】:\n{filing_context_str}\n")
+            logger.info(f"【检索路由建议】:\n{retrieval_route_context or '默认综合评估所有已接入证据源。'}\n")
             logger.info("-" * 60)
             
             # 2. 增强生成阶段
             t_llm0 = time.perf_counter()
-            strategy_plan = self.llm.generate_strategy(news_data, market_context_str, macro_data, fundamental_data, current_positions_str)
+            strategy_plan = self.llm.generate_strategy(
+                news_data,
+                market_context_str,
+                macro_data,
+                fundamental_data,
+                current_positions_str,
+                filing_context=filing_context_str,
+                retrieval_route_context=retrieval_route_context,
+            )
             metrics["llm_sec"] = round(time.perf_counter() - t_llm0, 6)
                 
             # 3. 解析结果
@@ -286,6 +350,7 @@ class MacroQuantAgent:
                         "reasoning": reasoning,
                         "plan": plan_snapshot,
                         "llm_audit": llm_audit,
+                        "retrieval_route": retrieval_route,
                         "orders": [],
                         "positions_after": self.positions,
                         "cash_after": self.cash,
@@ -314,6 +379,7 @@ class MacroQuantAgent:
                     "cash_ratio": round(cash_ratio, 6),
                 },
             )
+            would_submit_preview = _build_would_submit_preview(proposed_orders, market_session=market_session)
             
             if not proposed_orders:
                 logger.info("  -> 仓位已达标，今日无需调仓。")
@@ -326,6 +392,7 @@ class MacroQuantAgent:
                         "reasoning": reasoning,
                         "plan": plan_snapshot,
                         "llm_audit": llm_audit,
+                        "retrieval_route": retrieval_route,
                         "orders": [],
                         "positions_after": self.positions,
                         "cash_after": self.cash,
@@ -356,6 +423,17 @@ class MacroQuantAgent:
                 logger.warning(f"⏸️ 当前仅允许生成计划，不会下单（{planning_reason}）。")
                 emit_event("agent", "WARN", "planning_only", planning_reason, {"date": date_str, "market_session": market_session})
                 log_struct("planning_only", {"date": date_str, "broker": BROKER_TYPE, "reason": planning_reason}, level="WARNING")
+                log_struct(
+                    "would_submit_preview",
+                    {
+                        "date": date_str,
+                        "broker": BROKER_TYPE,
+                        "reason": planning_reason,
+                        "outside_rth": bool(ALLOW_OUTSIDE_RTH),
+                        "order_count": len(would_submit_preview),
+                        "orders": would_submit_preview,
+                    },
+                )
                 status = "planning_only"
                 SnapshotDB().save_decision(
                     date_str=date_str,
@@ -364,7 +442,9 @@ class MacroQuantAgent:
                         "reasoning": reasoning,
                         "plan": plan_snapshot,
                         "llm_audit": llm_audit,
+                        "retrieval_route": retrieval_route,
                         "orders": proposed_orders,
+                        "would_submit_preview": would_submit_preview,
                         "positions_after": self.positions,
                         "cash_after": self.cash,
                         "market_session": market_session,
@@ -465,6 +545,7 @@ class MacroQuantAgent:
                     "reasoning": reasoning,
                     "plan": plan_snapshot,
                     "llm_audit": llm_audit,
+                    "retrieval_route": retrieval_route,
                     "orders": proposed_orders,
                     "execution_report": execution_report,
                     "execution_summary": execution_summary,

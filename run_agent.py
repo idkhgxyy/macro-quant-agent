@@ -6,6 +6,7 @@ from utils.logger import setup_logger
 logger = setup_logger(__name__)
 from config import (
     ALPHA_VANTAGE_KEY, VOLCENGINE_API_KEY, VOLCENGINE_MODEL_ENDPOINT,
+    LLM_BASE_URL,
     TECH_UNIVERSE, INITIAL_CAPITAL, BROKER_TYPE, ENABLE_LIVE_TRADING, IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID,
     MARKET_TIMEZONE,
 )
@@ -21,7 +22,11 @@ from utils.run_lock import RunLock
 def build_agent(run_mode: str = "manual") -> MacroQuantAgent:
     # 1. 实例化各个独立模块
     retriever = RAGRetriever(alpha_vantage_key=ALPHA_VANTAGE_KEY)
-    llm_client = VolcengineLLMClient(api_key=VOLCENGINE_API_KEY, model_endpoint=VOLCENGINE_MODEL_ENDPOINT)
+    llm_client = VolcengineLLMClient(
+        api_key=VOLCENGINE_API_KEY,
+        model_endpoint=VOLCENGINE_MODEL_ENDPOINT,
+        base_url=LLM_BASE_URL,
+    )
 
     # 2. 根据配置选择 Broker (Mock 还是 IBKR)
     if BROKER_TYPE == "ibkr":

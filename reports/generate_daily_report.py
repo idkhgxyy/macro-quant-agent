@@ -10,7 +10,9 @@ ROOT = os.path.dirname(os.path.dirname(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from utils.review import build_day_review
+from config import VOLCENGINE_API_KEY, VOLCENGINE_MODEL_ENDPOINT, LLM_BASE_URL
+from llm.volcengine import VolcengineLLMClient, build_review_summary_fallback
+from utils.review import build_auto_daily_brief, build_day_review
 
 
 def _iter_jsonl(paths: list[str]):
@@ -26,6 +28,10 @@ def _iter_jsonl(paths: list[str]):
                     yield json.loads(line)
                 except Exception:
                     continue
+
+
+def _review_sidecar_path(date_str: str) -> str:
+    return os.path.join("reports", f"daily_report_{date_str}.review.json")
 
 
 def generate_daily_report(date_str: Optional[str] = None) -> str:
@@ -126,11 +132,40 @@ def generate_daily_report(date_str: Optional[str] = None) -> str:
         ledger_doc=ledger_doc,
         latest_metric=latest_metric,
     )
+    review_summary = build_review_summary_fallback(review, reason="llm_review_not_configured")
+    if VOLCENGINE_API_KEY and VOLCENGINE_MODEL_ENDPOINT:
+        try:
+            review_summary = VolcengineLLMClient(
+                api_key=VOLCENGINE_API_KEY,
+                model_endpoint=VOLCENGINE_MODEL_ENDPOINT,
+                base_url=LLM_BASE_URL,
+            ).generate_review_summary(review, mode="report")
+        except Exception:
+            review_summary = build_review_summary_fallback(review, reason="llm_review_generation_failed")
+    auto_brief = build_auto_daily_brief(review, review_summary)
+
+    report_lines.append("")
+    report_lines.append("## Auto Brief")
+    for line in auto_brief or ["暂无自动摘要。"]:
+        report_lines.append(f"- {line}")
 
     report_lines.append("")
     report_lines.append("## Review")
     for line in review.get("highlights") or ["No review summary available."]:
         report_lines.append(f"- {line}")
+
+    report_lines.append("")
+    report_lines.append("## LLM Review")
+    report_lines.append(f"- summary: {review_summary.get('summary') or 'n/a'}")
+    for line in review_summary.get("key_points") or []:
+        report_lines.append(f"- key_point: {line}")
+    for line in review_summary.get("risks") or []:
+        report_lines.append(f"- risk: {line}")
+    for line in review_summary.get("next_steps") or []:
+        report_lines.append(f"- next_step: {line}")
+    review_audit = review_summary.get("_audit") if isinstance(review_summary.get("_audit"), dict) else {}
+    report_lines.append(f"- review_prompt_version: {review_audit.get('prompt_version') or 'n/a'}")
+    report_lines.append(f"- review_generation_mode: {review_audit.get('selected_attempt') or 'n/a'}")
 
     report_lines.append("")
     report_lines.append("## Attribution Preview")
@@ -153,6 +188,25 @@ def generate_daily_report(date_str: Optional[str] = None) -> str:
     report_lines.append(f"- partial_terminal_count: {execution_lifecycle.get('partial_terminal_count', 0)}")
     report_lines.append(f"- avg_elapsed_sec: {execution_lifecycle.get('avg_elapsed_sec') if execution_lifecycle.get('avg_elapsed_sec') is not None else 'n/a'}")
     report_lines.append(f"- max_elapsed_sec: {execution_lifecycle.get('max_elapsed_sec') if execution_lifecycle.get('max_elapsed_sec') is not None else 'n/a'}")
+    execution_lifecycle_details = review.get("execution_lifecycle_details") or {}
+    problem_orders = execution_lifecycle_details.get("problem_orders") or []
+    slowest_orders = execution_lifecycle_details.get("slowest_orders") or []
+    if problem_orders:
+        report_lines.append(
+            "- lifecycle_problem_orders: "
+            + "; ".join(
+                f"{row.get('ticker', '—')}:{row.get('status_detail', 'unknown')}"
+                for row in problem_orders[:3]
+            )
+        )
+    if slowest_orders:
+        report_lines.append(
+            "- slowest_orders: "
+            + "; ".join(
+                f"{row.get('ticker', '—')}:{float(row.get('elapsed_sec') or 0.0):.2f}s/{row.get('status', 'unknown')}"
+                for row in slowest_orders[:3]
+            )
+        )
     report_lines.append(f"- reconcile_ok: {review.get('reconcile_ok')}")
 
     top_allocations = review.get("top_allocations") or []
@@ -191,6 +245,18 @@ def generate_daily_report(date_str: Optional[str] = None) -> str:
     out_path = os.path.join("reports", f"daily_report_{date_str}.md")
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(report_lines) + "\n")
+    with open(_review_sidecar_path(date_str), "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "date": date_str,
+                "review_summary": review_summary,
+                "auto_brief": auto_brief,
+                "review_status": review.get("status"),
+            },
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
     return out_path
 
 

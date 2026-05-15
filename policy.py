@@ -64,8 +64,14 @@ JSON 必须包含以下字段：
   "reasoning": "你的分析逻辑，必须引用输入证据，解释为何保持/调整",
   "selected_strategies": ["core_hold_momentum_tilt"],
   "allocations": {{"AAPL": 0.2, "MSFT": 0.2, "NVDA": 0.2, "GOOGL": 0.2, "META": 0.1}},
+  "evidence_weights": {{"news": 0.35, "market": 0.25, "macro": 0.15, "fundamental": 0.15, "sec_edgar": 0.10}},
+  "self_evaluation": {{
+    "confidence": 0.68,
+    "key_risks": ["若市场动量快速反转，当前增配判断可能失效"],
+    "counterpoints": ["若宏观利率重新上行，应提高现金权重"]
+  }},
   "evidence": [
-    {{"source": "macro|fundamental|news|market|positions", "quote": "你引用的一句话/一条数据点", "ticker": "AAPL 或 null"}}
+    {{"source": "macro|fundamental|news|market|positions|sec_edgar", "quote": "你引用的一句话/一条数据点", "ticker": "AAPL 或 null", "chunk_id": "可选", "url": "可选", "timestamp": "可选"}}
   ]
 }}
 约束：
@@ -73,4 +79,6 @@ JSON 必须包含以下字段：
 - allocations 的权重必须为数字，且总和 <= 1.0
 - 任意单票权重 <= {MAX_SINGLE_POSITION:.2f}
 - 建议尽量让非零仓位数量 <= {MAX_HOLDINGS}，且非零仓位不应小于 {MIN_POSITION_WEIGHT:.2f}
+- evidence_weights 为可选字段；若提供，只能包含 `macro/fundamental/news/market/positions/sec_edgar`，值必须为非负数字，用于表达本次决策更依赖哪些证据源
+- self_evaluation 为可选字段；若提供，请给出 0-1 的 confidence、1-3 条 key_risks、1-3 条 counterpoints，帮助系统做低人工干预复盘
 """
