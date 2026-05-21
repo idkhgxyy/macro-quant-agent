@@ -446,6 +446,81 @@ def _execution_lifecycle_details(execution_report: Any, limit: int = 5) -> dict:
     }
 
 
+def _position_value_attribution(
+    before_positions: Any,
+    after_positions: Any,
+    prices: dict,
+) -> list[dict]:
+    """Per-holding value and weight attribution before/after execution.
+    Returns sorted list with value_before, value_after, weight_before, weight_after, change.
+    """
+    before = _normalize_positions(before_positions)
+    after = _normalize_positions(after_positions)
+    all_tickers = sorted(set(before.keys()) | set(after.keys()))
+    rows = []
+    total_before = 0.0
+    total_after = 0.0
+    for ticker in all_tickers:
+        px = _safe_float(prices.get(ticker))
+        if px is None or px <= 0:
+            continue
+        vb = float(before.get(ticker, 0.0)) * px
+        va = float(after.get(ticker, 0.0)) * px
+        total_before += vb
+        total_after += va
+        if abs(vb) < 1e-9 and abs(va) < 1e-9:
+            continue
+        rows.append({
+            "ticker": ticker,
+            "shares_before": float(before.get(ticker, 0.0)),
+            "shares_after": float(after.get(ticker, 0.0)),
+            "price": px,
+            "value_before": vb,
+            "value_after": va,
+            "change": va - vb,
+        })
+    for row in rows:
+        row["weight_before"] = round(row["value_before"] / total_before, 6) if total_before > 0 else 0.0
+        row["weight_after"] = round(row["value_after"] / total_after, 6) if total_after > 0 else 0.0
+        row["weight_change"] = round(row["weight_after"] - row["weight_before"], 6)
+    rows.sort(key=lambda r: abs(r["change"]), reverse=True)
+    return rows
+
+
+def _portfolio_return_attribution(
+    before_cash: Optional[float],
+    after_cash: Optional[float],
+    before_positions: Any,
+    after_positions: Any,
+    prices: dict,
+) -> dict:
+    """Total portfolio return and high-level decomposition."""
+    rows = _position_value_attribution(before_positions, after_positions, prices)
+    total_value_before = float(before_cash or 0.0) + sum(r["value_before"] for r in rows)
+    total_value_after = float(after_cash or 0.0) + sum(r["value_after"] for r in rows)
+    total_return = total_value_after - total_value_before
+    total_return_pct = (total_return / total_value_before * 100.0) if total_value_before > 0 else None
+    cash_change = (after_cash or 0.0) - (before_cash or 0.0)
+
+    top_holdings = sorted(rows, key=lambda r: r["weight_after"], reverse=True)[:5]
+    top3_weight = sum(r["weight_after"] for r in top_holdings[:3])
+    cash_ratio_before = (before_cash or 0.0) / total_value_before if total_value_before > 0 else None
+    cash_ratio_after = (after_cash or 0.0) / total_value_after if total_value_after > 0 else None
+
+    return {
+        "total_value_before": round(total_value_before, 2),
+        "total_value_after": round(total_value_after, 2),
+        "total_return": round(total_return, 2),
+        "total_return_pct": round(total_return_pct, 4) if total_return_pct is not None else None,
+        "cash_change": round(cash_change, 2),
+        "holdings": rows,
+        "top_holdings": top_holdings,
+        "top3_concentration": round(top3_weight, 6),
+        "cash_ratio_before": round(cash_ratio_before, 6) if cash_ratio_before is not None else None,
+        "cash_ratio_after": round(cash_ratio_after, 6) if cash_ratio_after is not None else None,
+    }
+
+
 def build_day_review(
     *,
     decision_doc: Optional[dict] = None,
@@ -622,6 +697,32 @@ def build_day_review(
     if isinstance(commission_total, (int, float)) and abs(commission_total) > 1e-9:
         highlights.append(f"券商已回报佣金约 {commission_total:.2f}。")
 
+    decision_prices = decision_payload.get("decision_prices")
+    portfolio_attribution = None
+    if isinstance(decision_prices, dict) and before_cash is not None:
+        portfolio_attribution = _portfolio_return_attribution(
+            before_cash,
+            after_cash,
+            (ledger_payload.get("before") or {}).get("positions"),
+            decision_payload.get("positions_after") if isinstance(decision_payload.get("positions_after"), dict) else (ledger_payload.get("after") or {}).get("positions"),
+            decision_prices,
+        )
+
+    if portfolio_attribution:
+        tp = portfolio_attribution.get("total_return_pct")
+        if tp is not None:
+            direction = "+" if tp >= 0 else ""
+            highlights.append(f"组合收益归因：当日总值变动 {direction}{tp:.2f}%（{portfolio_attribution['total_value_before']:.0f} → {portfolio_attribution['total_value_after']:.0f}）。")
+        top3 = portfolio_attribution.get("top3_concentration")
+        if top3 is not None:
+            highlights.append(f"前 3 大持仓集中度约 {top3:.1%}，现金占比 {portfolio_attribution.get('cash_ratio_after', 0):.1%}。")
+        top_winners = [r for r in (portfolio_attribution.get("top_holdings") or []) if r.get("change", 0) > 0][:2]
+        top_losers = [r for r in (portfolio_attribution.get("top_holdings") or []) if r.get("change", 0) < 0][:2]
+        if top_winners:
+            highlights.append("主要正贡献：" + "，".join(f"{r['ticker']} +{r['change']:.0f}" for r in top_winners) + "。")
+        if top_losers:
+            highlights.append("主要负贡献：" + "，".join(f"{r['ticker']} {r['change']:.0f}" for r in top_losers) + "。")
+
     review = {
         "date": decision_doc.get("date") if isinstance(decision_doc, dict) else None,
         "status": status,
@@ -638,6 +739,7 @@ def build_day_review(
         "execution_lifecycle_details": execution_lifecycle_details,
         "would_submit_preview": would_submit_preview,
         "cash_delta": cash_delta,
+        "portfolio_attribution": portfolio_attribution,
         "reconcile_ok": bool(reconcile.get("ok")) if isinstance(reconcile, dict) and "ok" in reconcile else None,
         "planning_only_reason": planning_reason or None,
         "market_state": market_session.get("market_state"),

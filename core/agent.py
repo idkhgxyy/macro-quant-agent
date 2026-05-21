@@ -397,6 +397,7 @@ class MacroQuantAgent:
                     "cash_after": self.cash,
                     "market_session": market_session,
                     "run_start_ts": run_start_ts,
+                    "decision_prices": ctx["current_prices"],
                 },
             )
             metrics["status"] = "invalid"
@@ -438,6 +439,7 @@ class MacroQuantAgent:
                     "cash_after": self.cash,
                     "market_session": market_session,
                     "run_start_ts": run_start_ts,
+                    "decision_prices": ctx["current_prices"],
                 },
             )
             metrics["status"] = "no_trade"
@@ -491,6 +493,7 @@ class MacroQuantAgent:
                     "planning_only_reason": planning_reason,
                     "live_trading_enabled": bool(ENABLE_LIVE_TRADING),
                     "run_start_ts": run_start_ts,
+                    "decision_prices": ctx["current_prices"],
                 },
             )
             metrics["status"] = "planning_only"
@@ -577,6 +580,7 @@ class MacroQuantAgent:
                 "cash_after": self.cash,
                 "market_session": market_session,
                 "run_start_ts": run_start_ts,
+                "decision_prices": ctx["current_prices"],
             },
         )
         return execution_summary.get("status") or "traded"

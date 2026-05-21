@@ -218,6 +218,69 @@ class DayReviewTests(unittest.TestCase):
         self.assertTrue(any("风险提示：" in line for line in lines))
         self.assertTrue(any("后续关注：" in line for line in lines))
 
+    def test_build_day_review_includes_portfolio_attribution_when_prices_available(self):
+        decision_doc = {
+            "date": "2026-05-10",
+            "payload": {
+                "status": "filled",
+                "plan": {
+                    "allocations": {"AAPL": 0.6, "MSFT": 0.3},
+                    "evidence_weights": {"news": 0.5, "market": 0.5},
+                    "self_evaluation": {"confidence": 0.7, "key_risks": [], "counterpoints": []},
+                },
+                "llm_audit": {},
+                "retrieval_route": {},
+                "orders": [
+                    {"ticker": "AAPL", "action": "BUY", "shares": 60, "price": 100.0, "amount": 6000.0},
+                ],
+                "positions_after": {"AAPL": 60, "MSFT": 10},
+                "cash_after": 3000.0,
+                "decision_prices": {"AAPL": 105.0, "MSFT": 200.0},
+                "market_session": {"market_state": "rth"},
+            },
+        }
+        ledger_doc = {
+            "payload": {
+                "before": {"cash": 10000.0, "positions": {"AAPL": 0, "MSFT": 10}},
+                "after": {"cash": 3000.0, "positions": {"AAPL": 60, "MSFT": 10}},
+                "execution_report": [
+                    {"ticker": "AAPL", "action": "BUY", "requested": 60, "filled": 60, "avg_fill_price": 100.0, "commission": 0.0, "elapsed_sec": 1.0, "status_detail": "filled_complete", "status": "Filled"},
+                ],
+            }
+        }
+
+        review = build_day_review(decision_doc=decision_doc, ledger_doc=ledger_doc, latest_metric=None)
+
+        self.assertIsNotNone(review["portfolio_attribution"])
+        pa = review["portfolio_attribution"]
+        self.assertAlmostEqual(pa["total_value_before"], 12000.0)
+        self.assertAlmostEqual(pa["total_value_after"], 11300.0)
+        self.assertAlmostEqual(pa["total_return"], -700.0)
+        self.assertAlmostEqual(pa["total_return_pct"], -5.8333, places=3)
+        self.assertEqual(pa["cash_change"], -7000.0)
+        self.assertEqual(len(pa["holdings"]), 2)
+        self.assertGreater(pa["holdings"][0]["weight_after"], pa["holdings"][1]["weight_after"])
+        self.assertTrue(any("组合收益归因" in msg for msg in review["highlights"]))
+        self.assertTrue(any("前 3 大持仓集中度" in msg for msg in review["highlights"]))
+
+    def test_build_day_review_skips_attribution_when_no_prices(self):
+        decision_doc = {
+            "date": "2026-05-11",
+            "payload": {
+                "status": "planning_only",
+                "planning_only_reason": "live_trading_disabled",
+                "plan": {"allocations": {"AAPL": 0.2}},
+                "market_session": {"market_state": "open"},
+                "positions_after": {"AAPL": 0},
+                "cash_after": 10000.0,
+            },
+        }
+
+        review = build_day_review(decision_doc=decision_doc, ledger_doc=None, latest_metric=None)
+
+        self.assertIsNone(review["portfolio_attribution"])
+        self.assertFalse(any("组合收益归因" in msg for msg in review["highlights"]))
+
 
 if __name__ == "__main__":
     unittest.main()
