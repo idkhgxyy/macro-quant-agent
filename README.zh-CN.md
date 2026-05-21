@@ -143,6 +143,70 @@ isolation/
 └── run_scheduler.py           # 轻量调度入口
 ```
 
+### 分层架构图
+
+```mermaid
+flowchart TB
+    Config["config.py / policy.py / strategy_registry.py<br/>配置层"]
+
+    Agent["core/agent.py · MacroQuantAgent<br/>编排层"]
+
+    RD["data/retriever.py / cache.py / snapshot_db.py<br/>数据检索层"]
+
+    LM["llm/volcengine.py / validator.py<br/>LLM 层"]
+
+    EX["execution/portfolio.py / broker.py / reconcile.py<br/>执行层"]
+
+    OP["utils/ · dashboard/ · reports/<br/>运维与可观测性层"]
+
+    Config --> Agent
+    Agent --> RD
+    Agent --> LM
+    RD --> LM
+    LM --> EX
+    Agent --> EX
+    EX --> OP
+
+    style Config fill:#e3f2fd,stroke:#1565c0,color:#000
+    style Agent fill:#fff3e0,stroke:#e65100,color:#000
+    style RD fill:#e8f5e9,stroke:#2e7d32,color:#000
+    style LM fill:#f3e5f5,stroke:#6a1b9a,color:#000
+    style EX fill:#fce4ec,stroke:#c62828,color:#000
+    style OP fill:#fff8e1,stroke:#f9a825,color:#000
+```
+
+### 日度运行管道
+
+```mermaid
+flowchart TD
+    START([run_agent.py]) --> KS{"熔断检查<br/>Kill Switch"}
+    KS -->|锁定| EXIT1([退出])
+    KS -->|正常| MS["市场时段判断<br/>get_market_session"]
+    MS -->|休市| EXIT2([market_closed])
+    MS -->|开市| RAG["RAG 检索<br/>五维数据"]
+    RAG --> ROUTE["检索路由"]
+    ROUTE --> SNAP["保存 RAG 快照"]
+    SNAP --> LLM_C["LLM 策略生成"]
+    LLM_C --> VAL{"校验通过?"}
+    VAL -->|否| EXIT3([invalid])
+    VAL -->|是| REB["调仓计算<br/>PortfolioManager"]
+    REB --> ORD{"有订单?"}
+    ORD -->|无| EXIT4([no_trade])
+    ORD -->|有| GUARD{"执行守卫"}
+    GUARD -->|拦截| EXIT5([planning_only])
+    GUARD -->|放行| SUB["提交订单<br/>Broker"]
+    SUB --> RECON["对账 · 账本 · 快照"]
+    RECON --> FIN["Heartbeat · Metrics · Alerting"]
+
+    style START fill:#e3f2fd,stroke:#1565c0,color:#000
+    style EXIT1 fill:#ffebee,stroke:#c62828,color:#000
+    style EXIT2 fill:#ffebee,stroke:#c62828,color:#000
+    style EXIT3 fill:#ffebee,stroke:#c62828,color:#000
+    style EXIT4 fill:#fff3e0,stroke:#e65100,color:#000
+    style EXIT5 fill:#fff3e0,stroke:#e65100,color:#000
+    style FIN fill:#e8f5e9,stroke:#2e7d32,color:#000
+```
+
 ## 技术栈
 
 - Python 3.9+

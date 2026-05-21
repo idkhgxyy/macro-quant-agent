@@ -142,6 +142,70 @@ isolation/
 └── run_scheduler.py           # lightweight scheduled runner
 ```
 
+### Layered Architecture
+
+```mermaid
+flowchart TB
+    Config["config.py / policy.py / strategy_registry.py<br/>配置层 · Config"]
+
+    Agent["core/agent.py · MacroQuantAgent<br/>编排层 · Orchestration"]
+
+    RD["data/retriever.py / cache.py / snapshot_db.py<br/>数据检索层 · Data Layer"]
+
+    LM["llm/volcengine.py / validator.py<br/>LLM 层 · LLM Layer"]
+
+    EX["execution/portfolio.py / broker.py / reconcile.py<br/>执行层 · Execution"]
+
+    OP["utils/ · dashboard/ · reports/<br/>运维与可观测性层 · Operations & Observability"]
+
+    Config --> Agent
+    Agent --> RD
+    Agent --> LM
+    RD --> LM
+    LM --> EX
+    Agent --> EX
+    EX --> OP
+
+    style Config fill:#e3f2fd,stroke:#1565c0,color:#000
+    style Agent fill:#fff3e0,stroke:#e65100,color:#000
+    style RD fill:#e8f5e9,stroke:#2e7d32,color:#000
+    style LM fill:#f3e5f5,stroke:#6a1b9a,color:#000
+    style EX fill:#fce4ec,stroke:#c62828,color:#000
+    style OP fill:#fff8e1,stroke:#f9a825,color:#000
+```
+
+### Daily Routine Pipeline
+
+```mermaid
+flowchart TD
+    START([run_agent.py]) --> KS{"熔断检查<br/>Kill Switch"}
+    KS -->|locked| EXIT1([退出])
+    KS -->|ok| MS["市场时段判断<br/>get_market_session"]
+    MS -->|closed| EXIT2([market_closed])
+    MS -->|open| RAG["RAG 检索<br/>五维数据"]
+    RAG --> ROUTE["检索路由"]
+    ROUTE --> SNAP["保存 RAG 快照"]
+    SNAP --> LLM_C["LLM 策略生成"]
+    LLM_C --> VAL{"校验通过?"}
+    VAL -->|no| EXIT3([invalid])
+    VAL -->|yes| REB["调仓计算<br/>PortfolioManager"]
+    REB --> ORD{"有订单?"}
+    ORD -->|no| EXIT4([no_trade])
+    ORD -->|yes| GUARD{"执行守卫"}
+    GUARD -->|blocked| EXIT5([planning_only])
+    GUARD -->|allowed| SUB["提交订单<br/>Broker"]
+    SUB --> RECON["对账 · 账本 · 快照"]
+    RECON --> FIN["Heartbeat · Metrics · Alerting"]
+
+    style START fill:#e3f2fd,stroke:#1565c0,color:#000
+    style EXIT1 fill:#ffebee,stroke:#c62828,color:#000
+    style EXIT2 fill:#ffebee,stroke:#c62828,color:#000
+    style EXIT3 fill:#ffebee,stroke:#c62828,color:#000
+    style EXIT4 fill:#fff3e0,stroke:#e65100,color:#000
+    style EXIT5 fill:#fff3e0,stroke:#e65100,color:#000
+    style FIN fill:#e8f5e9,stroke:#2e7d32,color:#000
+```
+
 ## Tech Stack
 
 - Python 3.9+
