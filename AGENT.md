@@ -71,6 +71,7 @@ Treat this path as the source of truth when reasoning about system behavior.
 ### Core Runtime
 
 - `core/agent.py`: orchestration of the daily run
+- `core/planning.py`: `PlanningService` — RAG retrieval, LLM strategy generation, portfolio rebalancing (extracted from agent.py, injected as optional dependency)
 - `run_agent.py`: main entrypoint for manual or scheduled daily runs
 - `run_scheduler.py`: polling scheduler
 - `run_llm_backtest.py`: backtest entrypoint
