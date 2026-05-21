@@ -695,6 +695,10 @@ class MacroQuantAgent:
             metrics["prompt_version"] = pll_audit.get("prompt_version")
             metrics["strategy_ids"] = (plan_result.get("strategy_ids") or [])
             metrics["cash_ratio"] = plan_result.get("cash_ratio", 0.0)
+            metrics["llm_errors"] = plan_result.get("errors", [])
+            metrics["llm_warning_count"] = len(plan_result.get("warnings", []))
+            if plan_result.get("rebalance_sec") is not None:
+                metrics["rebalance_sec"] = plan_result["rebalance_sec"]
 
             plan_status = plan_result["status"]
 
