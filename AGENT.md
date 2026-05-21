@@ -97,6 +97,7 @@ Treat this path as the source of truth when reasoning about system behavior.
 - `execution/broker.py`: `BaseBroker`, `MockBroker`, `IBKRBroker`
 - `execution/reconcile.py`: execution reconciliation
 - `execution/ledger.py`: execution ledger persistence
+- `core/execution.py`: `ExecutionService` — order submission, reconciliation loop, execution classification (extracted from agent.py, injected as optional dependency)
 
 ### Operations and Observability
 
