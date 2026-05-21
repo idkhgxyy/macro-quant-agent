@@ -186,21 +186,24 @@ If you change any of these:
 3. Check report generators.
 4. Check relevant tests.
 
+## Environment Dependencies
+
+- Python 3.9+ (stdlib `sqlite3`, `zoneinfo`)
+- Key packages: `openai`, `pandas`, `numpy`, `matplotlib`, `yfinance`, `ib_insync`
+- Dev packages: `pytest`, `ruff`, `mypy`, `types-requests`
+- See `requirements.txt` for full pinned versions
+- Avoid introducing new heavy dependencies (e.g. full ML frameworks) without discussion
+
 ## Rules for Making Changes
 
-### Prefer Small, Traceable Changes
+### Prefer Focused, Reviewable Increments
 
-- Keep changes local to the relevant layer.
-- Avoid broad refactors unless the user explicitly asks for them.
-- Preserve current safety semantics.
+Tightly related sub-steps that touch the same layer and share the same verification path should be batched into one coherent increment. Avoid both extremes:
+- **Don't** split trivial work into many micro-steps that each create overhead.
+- **Don't** bundle unrelated work across planning, execution, dashboard, and persistence in one patch.
 
-### Prefer Reviewable Increments, Not Artificially Tiny Slices
-
-- Prefer changes that can be implemented, reviewed, and verified in one sitting.
-- For this repository, a good default is one coherent increment per task, not necessarily the smallest possible edit.
-- If 2-3 adjacent sub-steps touch the same layer and files, and share the same verification path, it is usually better to batch them together.
-- Still avoid bundling unrelated work across planning, execution, dashboard, and persistence layers in one patch.
-- When in doubt, optimize for: clear user value, low rollback cost, and focused verification.
+Good examples: add a small review metric and its focused test together; add a dashboard control and the matching wiring together.
+When in doubt, optimize for: clear user value, low rollback cost, and focused verification.
 
 ### Respect Planning vs Execution Separation
 
@@ -360,6 +363,31 @@ After meaningful changes:
   - dashboard auth or review output
 
 Avoid low-value tests that only restate implementation details.
+
+## Standard Extension Processes
+
+### Adding a New Strategy
+
+1. Add the strategy ID and description to `strategy_registry.py`.
+2. Add trigger/risk guidance in `policy.py` under the relevant prompt section.
+3. If the strategy requires new allocation constraints, update `validator.py`.
+4. Verify the strategy ID flows through `agent.py` metrics logging (no code change needed — it's auto-logged).
+
+### Adding a New Data Provider
+
+1. Add the provider function to `data/retriever.py` following the existing pattern (budget, cooldown, fallback, stale threshold).
+2. Add any provider-specific helpers (e.g. API wrappers) to a new or existing file under `data/`.
+3. Update `get_provider_status()` in `retriever.py` to include the new provider's health.
+4. If the new data is passed to the LLM, update `policy.py` (evidence schema) and `volcengine.py` (context assembly).
+5. Add integration-level coverage in `test_retriever_providers.py`.
+
+### Adding a New Dashboard Page
+
+1. Add the API endpoint in `dashboard/server.py` following the `/api/*` pattern (with token auth if configured).
+2. Add the frontend rendering in `dashboard/static/app.js`.
+3. Add the HTML container in `dashboard/static/index.html` if needed.
+4. Protect via `DASHBOARD_TOKEN` — see existing `/api/alerts` or `/api/heartbeat` as templates.
+5. Add a focused test in `tests/test_dashboard_auth.py` or `tests/test_dashboard_review.py`.
 
 ## Documentation Relationship
 

@@ -24,16 +24,14 @@ Priorities:
 
 ### Start From the Active Path
 
-Prefer the current runtime path:
+Prefer files along the current runtime path (listed in `AGENT.md` → Main Execution Path). The most commonly touched files are:
 
-- `run_agent.py`
-- `core/agent.py`
-- `data/retriever.py`
-- `llm/volcengine.py`
-- `llm/validator.py`
-- `execution/portfolio.py`
-- `execution/broker.py`
-- `dashboard/server.py`
+- `run_agent.py` / `core/agent.py` — orchestration
+- `core/planning.py` / `core/execution.py` — extracted services (new code targets)
+- `data/retriever.py` — data layer
+- `llm/volcengine.py` / `llm/validator.py` — LLM layer
+- `execution/portfolio.py` / `execution/broker.py` / `execution/reconcile.py` — execution layer
+- `dashboard/server.py` — dashboard
 
 Avoid using `legacy/` for implementation guidance unless explicitly asked.
 
@@ -83,94 +81,13 @@ If you touch execution code, always ask yourself:
 3. Does this affect reconciliation?
 4. Does this affect snapshots, metrics, dashboard, or tests?
 
-## Recommended Read Order by Task
-
-### For LLM or allocation output issues
-
-Read:
-
-- `policy.py`
-- `strategy_registry.py`
-- `llm/volcengine.py`
-- `llm/validator.py`
-
-### For trade/no-trade behavior
-
-Read:
-
-- `core/agent.py`
-- `utils/trading_hours.py`
-- `utils/kill_switch.py`
-- `execution/portfolio.py`
-
-### For provider failures or stale context
-
-Read:
-
-- `data/retriever.py`
-- `data/cache.py`
-- `data/ibkr_data.py`
-- `utils/retry.py`
-- `utils/events.py`
-
-### For dashboard or review issues
-
-Read:
-
-- `dashboard/server.py`
-- `utils/review.py`
-- `utils/heartbeat.py`
-- `data/snapshot_db.py`
-- `execution/ledger.py`
-
-### For backtest behavior
-
-Read:
-
-- `run_llm_backtest.py`
-- `backtest/engine.py`
-- `data/snapshot_db.py`
-
-## What Good Changes Look Like
-
-Good changes in this repo usually have these properties:
-
-- one clearly scoped behavior change
-- minimal impact radius
-- preserved safety semantics
-- preserved logging and audit data
-- at least targeted verification
-
-Bad changes usually look like:
-
-- mixing planning, execution, and dashboard refactors in one patch
-- changing snapshot shapes without checking downstream readers
-- weakening guards to make tests or demos easier
-- over-refactoring code that is operationally sensitive
-
 ## Verification Checklist
 
 After non-trivial changes, verify the smallest meaningful surface.
 
 **When adding a new file, always add a module-level docstring at line 1** — see `AGENT.md` "Always Add Module-Level Docstrings for AI Agents" for the rule and examples. The primary readers of this codebase are AI agents, and docstrings are how they decide which files to read.
 
-Common commands:
-
-```bash
-python3 -m pytest -q
-```
-
-Examples of targeted test runs:
-
-```bash
-python3 -m pytest -q tests/test_portfolio_manager.py
-python3 -m pytest -q tests/test_runtime_guards.py
-python3 -m pytest -q tests/test_retriever_providers.py
-python3 -m pytest -q tests/test_dashboard_auth.py
-python3 -m pytest -q tests/test_heartbeat_scheduler.py
-```
-
-If changing docs only, full test execution is not required.
+Common commands are listed in `AGENT.md` → Commands. Use targeted test runs (e.g. `python3 -m pytest -q tests/test_portfolio_manager.py`) when the change is scoped to one module.
 
 ## Output Expectations
 
