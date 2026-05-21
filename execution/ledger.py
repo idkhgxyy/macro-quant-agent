@@ -3,10 +3,13 @@ import os
 from datetime import datetime
 from typing import Dict, Any
 
+from data.store import SqliteStore
+
 
 class ExecutionLedger:
     def __init__(self, dirpath: str = "ledger"):
         self.dirpath = dirpath
+        self._store = SqliteStore()
         os.makedirs(self.dirpath, exist_ok=True)
 
     def _path(self, date_str: str) -> str:
@@ -14,6 +17,10 @@ class ExecutionLedger:
         return os.path.join(self.dirpath, f"execution_{safe_date}.json")
 
     def save(self, date_str: str, payload: Dict[str, Any]):
+        try:
+            self._store.save_ledger(date_str, payload)
+        except Exception:
+            pass
         doc = {
             "kind": "execution",
             "date": date_str,

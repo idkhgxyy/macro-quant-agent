@@ -3,15 +3,24 @@ import os
 from datetime import datetime
 from typing import Optional, Dict, Any
 
+from data.store import SqliteStore
+
 
 class SnapshotDB:
     def __init__(self, dirpath: str = "snapshots"):
         self.dirpath = dirpath
+        self._store = SqliteStore()
         os.makedirs(self.dirpath, exist_ok=True)
 
     def _path(self, kind: str, date_str: str) -> str:
         safe_date = date_str.replace("/", "-")
         return os.path.join(self.dirpath, f"{kind}_{safe_date}.json")
+
+    def _write_sqlite(self, kind: str, date_str: str, payload: dict):
+        try:
+            self._store.save_snapshot(kind, date_str, payload)
+        except Exception:
+            pass
 
     def save_rag(self, date_str: str, payload: dict):
         doc = {
@@ -20,6 +29,7 @@ class SnapshotDB:
             "created_at": datetime.utcnow().isoformat() + "Z",
             "payload": payload,
         }
+        self._write_sqlite("rag", date_str, payload)
         with open(self._path("rag", date_str), "w", encoding="utf-8") as f:
             json.dump(doc, f, ensure_ascii=False, indent=2)
 
@@ -37,6 +47,7 @@ class SnapshotDB:
             "created_at": datetime.utcnow().isoformat() + "Z",
             "payload": payload,
         }
+        self._write_sqlite("decision", date_str, payload)
         with open(self._path("decision", date_str), "w", encoding="utf-8") as f:
             json.dump(doc, f, ensure_ascii=False, indent=2)
 

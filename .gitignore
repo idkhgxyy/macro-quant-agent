@@ -19,6 +19,7 @@ snapshots/
 
 data_cache.json
 portfolio_state.json
+data/trading.db
 kill_switch.lock
 
 *.png

@@ -1085,7 +1085,16 @@ Dashboard 本身不参与交易决策，只读取本地产物：
 
 ## 13. 持久化与运行产物
 
-项目主要使用文件持久化，核心产物如下：
+项目使用 **SQLite + JSON 文件双写** 策略。SQLite（`data/trading.db`）作为主存储，提供结构化查询能力；JSON/JSONL 文件保留用于 Dashboard 读取与人工排查。
+
+### 13.0 数据库层
+
+- `data/store.py` — `SqliteStore` 类，管理 SQLite 连接与 schema
+  - `snapshots` 表：`kind`（rag/decision）+ `date` 唯一键，payload 为 JSON
+  - `ledger` 表：按 date 唯一存储每日执行账本
+  - `metrics` 表：按时间顺序追加运行指标
+  - 线程安全（`check_same_thread=False`），WAL 模式提升并发读性能
+- `STORE_PATH` 环境变量可指定数据库路径，默认 `data/trading.db`
 
 ### 13.1 快照与账本
 

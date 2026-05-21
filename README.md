@@ -212,10 +212,11 @@ flowchart TD
 - `pandas`, `numpy`, `matplotlib`
 - `openai` SDK for OpenAI-compatible providers such as DeepSeek and Volcengine-compatible endpoints
 - `yfinance`, `Alpha Vantage`
-- `SEC EDGAR` for official filing metadata (8-K, 10-Q, 10-K)
+- SEC EDGAR for official filing metadata (8-K, 10-Q, 10-K)
 - `ib_insync` for IBKR integration
 - `FRED` for macroeconomic indicators
-- local JSON / JSONL persistence for snapshots, metrics, events, alerts, and runtime state
+- `sqlite3` for structured data persistence (snapshots, ledger, metrics)
+- local JSON / JSONL persistence for dashboard-readable artifacts and runtime state
 
 ## Quick Start
 
@@ -323,7 +324,7 @@ This project is more than a toy, but it is still not a production-grade trading 
 - some data sources are rate-limit sensitive, especially `yfinance`
 - backtest credibility depends on point-in-time snapshot coverage
 - synthetic-price fallback is useful for demos but not strong evidence of strategy validity
-- persistence is file-based rather than database-backed
+- persistence is transitioning from file-based to SQLite-backed; JSON files remain as a compatibility layer for the dashboard
 - dashboard is local-first and designed for inspection, not multi-user deployment
 
 ## Project Highlights
