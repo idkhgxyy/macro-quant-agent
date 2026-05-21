@@ -208,9 +208,27 @@ If you change any of these:
 
 ### Be Careful With File-Based State
 
-- This project is not database-backed.
-- Seemingly simple schema changes can break dashboard, reports, backtests, and tests.
-- Prefer additive fields over destructive shape changes.
+- All JSON/JSONL artifacts remain as a dashboard-readability layer; SQLite (`data/trading.db`) is the primary store
+- Seemingly simple schema changes can break dashboard, reports, backtests, and tests
+- Prefer additive fields over destructive shape changes
+
+### Always Add Module-Level Docstrings for AI Agents
+
+Every `.py` file **must** have a module-level docstring at line 1 (before any import). This is not optional.
+
+The docstring should:
+- Be in English
+- Be 1-3 lines
+- Describe what the file is responsible for, not how it works
+- Help an AI agent decide if this is the right file to read or edit for a given task
+
+Examples:
+```python
+"""MacroQuantAgent: orchestrates the daily routine — market check, RAG retrieval, LLM planning, risk controls, broker submission, reconciliation, and observability."""
+"""Tests for PortfolioManager rebalancing: risk constraints, cash buffer, dead-zone, concentration limits."""
+```
+
+Without these docstrings, AI agents waste context reading irrelevant files. This rule exists because the primary readers of this codebase are AI agents, not humans.
 
 ### Treat External Providers as Unreliable
 

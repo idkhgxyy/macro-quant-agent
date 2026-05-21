@@ -1,3 +1,4 @@
+"""Tests for CacheDB local JSON persistence layer."""
 import os
 import tempfile
 import unittest

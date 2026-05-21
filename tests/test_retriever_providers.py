@@ -1,3 +1,4 @@
+"""Tests for RAGRetriever provider fallback, cache mode, cooldown, and budget enforcement."""
 import unittest
 from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch

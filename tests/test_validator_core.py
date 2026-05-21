@@ -1,3 +1,4 @@
+"""Tests for LLM output validator: weight normalization, dead-zone filtering, max holdings, top-3 cap."""
 import unittest
 
 from config import MAX_HOLDINGS, MAX_SINGLE_POSITION, MIN_POSITION_WEIGHT, TECH_UNIVERSE

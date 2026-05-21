@@ -1,3 +1,4 @@
+"""Generates summary charts (bar, pie, trend) for daily review and backtest reports."""
 import glob
 import json
 import os

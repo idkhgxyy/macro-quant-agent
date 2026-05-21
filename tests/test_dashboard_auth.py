@@ -1,3 +1,4 @@
+"""Tests for DashboardHandler token-based authentication."""
 import os
 import unittest
 from urllib.parse import urlparse

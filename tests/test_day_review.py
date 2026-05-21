@@ -1,3 +1,4 @@
+"""Tests for build_day_review and build_auto_daily_brief including execution quality, lifecycle, attribution."""
 import unittest
 
 from utils.review import build_auto_daily_brief, build_day_review

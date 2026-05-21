@@ -1,3 +1,4 @@
+"""Tests for validator risk-exposure group caps: sector concentration and custom group limits."""
 import unittest
 
 from llm.validator import validate_and_clean_strategy_plan

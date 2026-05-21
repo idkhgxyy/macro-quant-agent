@@ -1,3 +1,4 @@
+"""Tests for KillSwitchStore persistence, trigger, and recovery."""
 import os
 import tempfile
 import unittest

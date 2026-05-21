@@ -152,6 +152,8 @@ Bad changes usually look like:
 
 After non-trivial changes, verify the smallest meaningful surface.
 
+**When adding a new file, always add a module-level docstring at line 1** — see `AGENT.md` "Always Add Module-Level Docstrings for AI Agents" for the rule and examples. The primary readers of this codebase are AI agents, and docstrings are how they decide which files to read.
+
 Common commands:
 
 ```bash

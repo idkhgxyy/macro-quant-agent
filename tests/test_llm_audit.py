@@ -1,3 +1,4 @@
+"""Tests for LLM audit metadata extraction and validator warning capture."""
 import json
 import unittest
 from types import SimpleNamespace

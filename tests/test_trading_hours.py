@@ -1,3 +1,4 @@
+"""Tests for US market session detection: RTH, half-day, holiday, weekend, and planning-only windows."""
 import unittest
 from datetime import datetime
 from zoneinfo import ZoneInfo

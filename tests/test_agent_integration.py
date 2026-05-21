@@ -1,3 +1,4 @@
+"""Integration tests for MacroQuantAgent daily routine: happy path, invalid LLM, planning_only, partial fills, cancellations, empty reports."""
 import json
 import os
 import tempfile

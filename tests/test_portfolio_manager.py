@@ -1,3 +1,4 @@
+"""Tests for PortfolioManager rebalancing: risk constraints, cash buffer, dead-zone, concentration limits."""
 import unittest
 from unittest.mock import patch
 

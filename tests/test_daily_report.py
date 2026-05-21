@@ -1,3 +1,4 @@
+"""Tests for daily markdown report generation from review data."""
 import json
 import os
 import tempfile

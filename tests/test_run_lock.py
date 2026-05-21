@@ -1,3 +1,4 @@
+"""Tests for RunLock file-based single-instance concurrency guard."""
 import json
 import os
 import socket

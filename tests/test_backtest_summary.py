@@ -1,3 +1,4 @@
+"""Tests for backtest summary generation and credibility assessment."""
 import unittest
 
 from run_llm_backtest import build_backtest_summary, select_backtest_dates

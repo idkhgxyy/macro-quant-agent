@@ -1,3 +1,4 @@
+"""Assembles daily markdown report from review data: summary, execution quality, attribution, and action items."""
 import glob
 import json
 import os
