@@ -3,7 +3,7 @@ import os
 import socket
 import tempfile
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 
 def utc_now_z() -> str:
@@ -39,7 +39,8 @@ class HeartbeatStore:
         runtime_dir = os.getenv("RUNTIME_STATE_DIR", os.path.join(project_root, "runtime"))
         default_path = os.getenv("HEARTBEAT_STATE_PATH", os.path.join(runtime_dir, "heartbeat.json"))
         self.path = path or default_path
-        self.recent_limit = max(int(recent_limit or os.getenv("HEARTBEAT_RECENT_RUNS", "20")), 1)
+        env_val = os.getenv("HEARTBEAT_RECENT_RUNS", "20") or "20"
+        self.recent_limit = max(int(recent_limit or env_val), 1)
         parent = os.path.dirname(self.path)
         if parent:
             os.makedirs(parent, exist_ok=True)
@@ -125,7 +126,7 @@ class HeartbeatStore:
         extra: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         doc = self.load()
-        current = doc.get("current") if isinstance(doc.get("current"), dict) else {}
+        current = cast(dict, doc.get("current") if isinstance(doc.get("current"), dict) else {})
         base = dict(current) if str(current.get("run_id") or "") == str(run_id or "") else {"run_id": run_id}
         ended_at = utc_now_z()
         summary = {
@@ -171,7 +172,7 @@ class HeartbeatStore:
             return None
         if pid is not None:
             try:
-                current_pid = int(current.get("pid"))
+                current_pid = int(current.get("pid") or 0)
             except Exception:
                 current_pid = None
             if current_pid != int(pid):
@@ -223,7 +224,7 @@ class HeartbeatStore:
         message: Optional[str] = None,
     ) -> Dict[str, Any]:
         doc = self.load()
-        scheduler = doc.get("scheduler") if isinstance(doc.get("scheduler"), dict) else {}
+        scheduler = cast(Dict[str, Any], doc.get("scheduler") if isinstance(doc.get("scheduler"), dict) else {})
         scheduler.update(
             {
                 "enabled": bool(enabled),

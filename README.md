@@ -68,7 +68,7 @@ Many internship-level trading demos stop at prompt engineering. This repo is str
 
 ### 1. Daily LLM allocation planning
 
-The agent retrieves macro, news, fundamental, and market context, then asks the LLM to produce portfolio weights over a fixed tech universe.
+The agent retrieves macro, news, fundamental, market, and SEC EDGAR filing context, then asks the LLM to produce portfolio weights over a fixed tech universe.
 
 ### 2. Guardrails before any execution
 
@@ -148,7 +148,9 @@ isolation/
 - `pandas`, `numpy`, `matplotlib`
 - `openai` SDK for OpenAI-compatible providers such as DeepSeek and Volcengine-compatible endpoints
 - `yfinance`, `Alpha Vantage`
+- `SEC EDGAR` for official filing metadata (8-K, 10-Q, 10-K)
 - `ib_insync` for IBKR integration
+- `FRED` for macroeconomic indicators
 - local JSON / JSONL persistence for snapshots, metrics, events, alerts, and runtime state
 
 ## Quick Start
@@ -172,6 +174,8 @@ LLM_PROVIDER=deepseek
 LLM_THINKING_TYPE=enabled
 LLM_REASONING_EFFORT=high
 
+MARKET_TIMEZONE=America/New_York
+
 IBKR_HOST=127.0.0.1
 IBKR_PORT=7497
 IBKR_CLIENT_ID=1
@@ -179,6 +183,17 @@ IBKR_DATA_CLIENT_ID=11
 
 BROKER_TYPE=mock
 ENABLE_LIVE_TRADING=false
+
+SEC_EDGAR_USER_AGENT=isolation-research/0.1 contact@example.com
+
+AGENT_SCHEDULER_ENABLED=false
+AGENT_SCHEDULE_TIME=16:10
+AGENT_SCHEDULE_TIMEZONE=America/New_York
+AGENT_SCHEDULE_POLL_SECONDS=30
+AGENT_RUN_LOCK_STALE_SECONDS=21600
+
+DASHBOARD_TOKEN=
+ALERT_WEBHOOK_URL=
 ```
 
 Legacy `VOLCENGINE_*` variables are still supported for compatibility, but the current recommended demo path uses DeepSeek's official OpenAI-compatible endpoint.
@@ -314,8 +329,19 @@ The next upgrades that would most improve the repo are:
 - move from file-based state to SQLite / Postgres
 - add real vector-store-backed RAG
 - add multi-day dashboard replay and execution-quality analytics
+- decompose `MacroQuantAgent` into finer-grained service layers
+- introduce multi-strategy integration with voting/weighting across sub-strategies
 
 Detailed internal task tracking is maintained in `TASKS.md`.
+
+## CI and Code Quality
+
+This project uses `ruff` for linting and `pytest` for testing, enforced via GitHub Actions on every push to `main` and on pull requests. The lint rules (configured in `.ruff.toml`) target bug-prone patterns only (unused imports, ambiguous variable names, missing f-string placeholders), deliberately keeping a low-noise baseline suitable for fast research iteration.
+
+```bash
+python3 -m ruff check .        # lint
+python3 -m pytest -q            # run all tests
+```
 
 ## Audit Example
 

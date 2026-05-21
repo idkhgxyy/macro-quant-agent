@@ -56,7 +56,8 @@ class IBKRBroker(BaseBroker):
             if report is None:
                 continue
             try:
-                commission = float(getattr(report, "commission", None))
+                raw_commission = getattr(report, "commission", None)
+                commission = float(raw_commission) if raw_commission is not None else None
             except Exception:
                 commission = None
             if commission is None:
@@ -246,7 +247,7 @@ class IBKRBroker(BaseBroker):
                 rec["status_detail"] = self._status_detail(
                     status,
                     filled,
-                    rec.get("requested"),
+                    float(rec.get("requested") or 0.0),
                     timeout_cancel_requested=bool(rec.get("timeout_cancel_requested")),
                 )
 

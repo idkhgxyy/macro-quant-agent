@@ -1,7 +1,7 @@
 import json
 import os
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from utils.events import emit_event
 from utils.webhook import post_json
@@ -124,7 +124,7 @@ def evaluate_and_notify(
     exception = status == "exception"
 
     state = _load_state(state_path)
-    counters = state.get("counters") if isinstance(state.get("counters"), dict) else {}
+    counters = cast(dict, state.get("counters") if isinstance(state.get("counters"), dict) else {})
 
     def _bump(key: str, cond: bool):
         v = int(counters.get(key, 0) or 0)

@@ -4,17 +4,18 @@ import tempfile
 from typing import Any, Dict, Optional
 
 from utils.heartbeat import utc_now_z
+from typing import cast
 
 
 class KillSwitchStore:
     def __init__(self, lock_path: Optional[str] = None, state_path: Optional[str] = None):
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         runtime_dir = os.getenv("RUNTIME_STATE_DIR", os.path.join(project_root, "runtime"))
-        self.lock_path = lock_path or os.path.join(project_root, "kill_switch.lock")
-        self.state_path = state_path or os.getenv(
+        self.lock_path = cast(str, lock_path or os.path.join(project_root, "kill_switch.lock"))
+        self.state_path = cast(str, state_path or os.getenv(
             "KILL_SWITCH_STATE_PATH",
             os.path.join(runtime_dir, "kill_switch.json"),
-        )
+        ))
         os.makedirs(os.path.dirname(self.state_path) or ".", exist_ok=True)
 
     def _default_doc(self) -> Dict[str, Any]:
@@ -96,7 +97,7 @@ class KillSwitchStore:
     ) -> Dict[str, Any]:
         doc = self.load()
         now = utc_now_z()
-        event = {
+        event: Dict[str, Any] = {
             "ts": now,
             "action": "triggered",
             "reason": str(reason or "").strip() or "unknown",

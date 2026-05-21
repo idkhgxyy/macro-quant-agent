@@ -151,9 +151,11 @@ def build_review_summary_fallback(review: dict, *, reason: str = "") -> dict:
     review = review if isinstance(review, dict) else {}
     status = str(review.get("status") or "unknown")
     highlights = _clean_text_list(review.get("highlights"), limit=3)
+    eq_raw = review.get("execution_quality")
+    el_raw = review.get("execution_lifecycle")
     top_allocations = review.get("top_allocations") if isinstance(review.get("top_allocations"), list) else []
-    execution_quality = review.get("execution_quality") if isinstance(review.get("execution_quality"), dict) else {}
-    execution_lifecycle = review.get("execution_lifecycle") if isinstance(review.get("execution_lifecycle"), dict) else {}
+    execution_quality: dict = eq_raw if isinstance(eq_raw, dict) else {}
+    execution_lifecycle: dict = el_raw if isinstance(el_raw, dict) else {}
 
     if status == "filled":
         summary = "本次策略已完成执行，系统基于当日证据完成了从计划到成交的闭环。"
@@ -278,7 +280,7 @@ class VolcengineLLMClient:
                 "reasoning_effort": self.reasoning_effort,
                 "stream": False,
             }
-        return self.client.chat.completions.create(**request_kwargs)
+        return self.client.chat.completions.create(**request_kwargs)  # type: ignore[call-overload]
         
     def generate_strategy(
         self,

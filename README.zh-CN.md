@@ -69,7 +69,7 @@
 
 ### 1. 日度 LLM 组合规划
 
-系统会拉取宏观、新闻、基本面、市场数据，然后让 LLM 在固定科技股股票池上生成目标权重。
+系统会拉取宏观、新闻、基本面、市场及 SEC EDGAR 公告数据，然后让 LLM 在固定科技股股票池上生成目标权重。
 
 ### 2. 执行前风控
 
@@ -149,7 +149,9 @@ isolation/
 - `pandas`, `numpy`, `matplotlib`
 - 通过 `openai` SDK 接入 DeepSeek 等 OpenAI 兼容 provider，以及 Volcengine 兼容接口
 - `yfinance`, `Alpha Vantage`
+- `SEC EDGAR` 获取官方公告元数据 (8-K / 10-Q / 10-K)
 - `ib_insync` 用于 IBKR 集成
+- `FRED` 获取宏观经济指标
 - 使用本地 JSON / JSONL 保存快照、指标、事件、告警和运行状态
 
 ## 快速开始
@@ -173,6 +175,8 @@ LLM_PROVIDER=deepseek
 LLM_THINKING_TYPE=enabled
 LLM_REASONING_EFFORT=high
 
+MARKET_TIMEZONE=America/New_York
+
 IBKR_HOST=127.0.0.1
 IBKR_PORT=7497
 IBKR_CLIENT_ID=1
@@ -180,6 +184,17 @@ IBKR_DATA_CLIENT_ID=11
 
 BROKER_TYPE=mock
 ENABLE_LIVE_TRADING=false
+
+SEC_EDGAR_USER_AGENT=isolation-research/0.1 contact@example.com
+
+AGENT_SCHEDULER_ENABLED=false
+AGENT_SCHEDULE_TIME=16:10
+AGENT_SCHEDULE_TIMEZONE=America/New_York
+AGENT_SCHEDULE_POLL_SECONDS=30
+AGENT_RUN_LOCK_STALE_SECONDS=21600
+
+DASHBOARD_TOKEN=
+ALERT_WEBHOOK_URL=
 ```
 
 旧的 `VOLCENGINE_*` 环境变量仍然保留兼容，但当前更推荐在演示和日常开发中使用 DeepSeek 官方 OpenAI 兼容接口。
@@ -315,8 +330,19 @@ open http://127.0.0.1:8010
 - 从文件状态迁移到 SQLite / Postgres
 - 引入真正的向量库 RAG
 - 增加多日 Dashboard 回放与执行质量分析
+- 将 `MacroQuantAgent` 拆分为更细粒度的 service 层
+- 引入多策略集成（子策略加权/投票）
 
 更细的任务拆分见 `TASKS.md`。
+
+## CI 与代码质量
+
+本项目使用 `ruff` 进行代码检查，`pytest` 进行测试，并通过 GitHub Actions 在每次推送到 `main` 分支及 PR 时自动执行。lint 规则（配置于 `.ruff.toml`）仅针对易出问题的模式（未使用导入、歧义变量名、缺失 f-string 占位符），刻意保持低噪声以适配快速研究迭代。
+
+```bash
+python3 -m ruff check .        # 代码检查
+python3 -m pytest -q            # 运行全部测试
+```
 
 ## 审计示例
 

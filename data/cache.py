@@ -5,6 +5,7 @@ import json
 import os
 from datetime import datetime
 import time
+from typing import Optional
 
 class CacheDB:
     """本地数据缓存，防止 API 被限流 (Rate Limit)"""
@@ -49,7 +50,7 @@ class CacheDB:
             return None
         return dict(record)
         
-    def set(self, key, data, ttl_seconds: int = None):
+    def set(self, key, data, ttl_seconds: Optional[int] = None):
         now_ts = time.time()
         if ttl_seconds is not None:
             ttl = max(int(ttl_seconds), 1)

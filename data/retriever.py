@@ -3,6 +3,7 @@ logger = setup_logger(__name__)
 
 import csv
 from datetime import datetime, timedelta
+from typing import Optional
 import os
 import requests
 import time
@@ -24,7 +25,7 @@ class RAGRetriever:
         self.av_key = alpha_vantage_key
         self.cache = CacheDB()
         self._av_last_call_ts = 0.0
-        self._provider_status = {}
+        self._provider_status: dict = {}
 
     @staticmethod
     def _dummy_prices() -> dict:
@@ -144,6 +145,8 @@ class RAGRetriever:
                 continue
             ticker = str(item.get("ticker") or "").upper().strip()
             cik = item.get("cik_str")
+            if cik is None:
+                continue
             try:
                 cik_int = int(cik)
             except Exception:
@@ -307,7 +310,7 @@ class RAGRetriever:
             "ts": datetime.utcnow().isoformat() + "Z",
         }
 
-    def _trace_provider_attempt(self, data_kind: str, provider: str, outcome: str, detail: str = "", failure_type: str = None):
+    def _trace_provider_attempt(self, data_kind: str, provider: str, outcome: str, detail: str = "", failure_type: Optional[str] = None):
         trace = self._provider_status.setdefault(
             data_kind,
             {"selected_provider": None, "mode": None, "detail": "", "attempts": [], "ts": datetime.utcnow().isoformat() + "Z"},
@@ -720,6 +723,7 @@ class RAGRetriever:
             if target is None:
                 target = now_local + timedelta(hours=18)
 
+        assert target is not None
         return max(int((target - now_local).total_seconds()), 60)
 
     def _cache_ttl_for_news(self) -> int:

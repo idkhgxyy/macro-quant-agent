@@ -81,6 +81,44 @@ def _build_would_submit_preview(orders: list[dict], *, market_session: Optional[
     return preview
 
 
+def _classify_execution(report: list) -> dict:
+    if not isinstance(report, list) or len(report) == 0:
+        return {"status": "submitted_no_report", "requested": 0, "filled": 0}
+
+    requested = 0
+    filled = 0
+    status_counts: dict[str, int] = {}
+    for r in report:
+        if not isinstance(r, dict):
+            continue
+        try:
+            req = int(float(r.get("requested") or 0))
+        except Exception:
+            req = 0
+        try:
+            fil = int(float(r.get("filled") or 0))
+        except Exception:
+            fil = 0
+        requested += max(req, 0)
+        filled += max(fil, 0)
+        st = str(r.get("status") or "unknown")
+        status_counts[st] = status_counts.get(st, 0) + 1
+
+    if requested <= 0:
+        return {"status": "no_order", "requested": requested, "filled": filled, "status_counts": status_counts}
+    if filled <= 0:
+        if any(k in status_counts for k in ["Rejected"]):
+            s = "rejected"
+        elif any(k in status_counts for k in ["Cancelled", "Inactive", "ApiCancelled"]):
+            s = "cancelled"
+        else:
+            s = "unfilled"
+        return {"status": s, "requested": requested, "filled": filled, "status_counts": status_counts}
+    if filled < requested:
+        return {"status": "partial", "requested": requested, "filled": filled, "status_counts": status_counts}
+    return {"status": "filled", "requested": requested, "filled": filled, "status_counts": status_counts}
+
+
 class MacroQuantAgent:
     """系统的核心组装器：调度 Data、LLM 和 Execution 层"""
     def __init__(
@@ -124,6 +162,424 @@ class MacroQuantAgent:
             recovery_hint="排查异常、确认问题已解除后删除 kill_switch.lock，再重新启动 daily agent 或 scheduler。",
         )
 
+    def _gather_context(self, date_str: str, metrics: dict, run_start_ts: str) -> Optional[dict]:
+        """Phase 0-1: 熔断检查、市场时段判断、RAG 检索。
+        返回上下文 dict，或 None 表示提前退出（metrics 中已记录状态）。
+        """
+        if self.check_kill_switch():
+            log_struct(
+                "kill_switch_locked",
+                {
+                    "date": date_str,
+                    "broker": BROKER_TYPE,
+                    "run_mode": self.run_mode,
+                    "kill_switch_reason": self.kill_switch.load().get("reason"),
+                },
+                level="WARNING",
+            )
+            metrics["status"] = "kill_switch_locked"
+            return None
+
+        market_session = get_market_session(
+            datetime.utcnow().replace(tzinfo=ZoneInfo("UTC")),
+            MARKET_TIMEZONE,
+            RTH_START,
+            RTH_END,
+            HALF_DAY_RTH_END,
+        )
+        metrics["market_state"] = market_session.get("market_state")
+        metrics["market_reason"] = market_session.get("session_reason")
+        metrics["trading_day"] = bool(market_session.get("is_trading_day"))
+        metrics["market_half_day"] = bool(market_session.get("is_half_day"))
+        metrics["market_rth_end"] = market_session.get("effective_rth_end")
+        log_struct(
+            "daily_start",
+            {
+                "date": date_str,
+                "broker": BROKER_TYPE,
+                "market_state": market_session.get("market_state"),
+                "market_reason": market_session.get("session_reason"),
+                "holiday_name": market_session.get("holiday_name"),
+                "early_close_name": market_session.get("early_close_name"),
+            },
+        )
+
+        if market_session.get("market_state") == "closed":
+            reason = str(market_session.get("session_reason") or "closed")
+            logger.info(f"📭 市场休市（{reason}），今日不生成新策略。")
+            emit_event(
+                "market.session",
+                "INFO",
+                "closed",
+                reason,
+                {
+                    "date": date_str,
+                    "holiday_name": market_session.get("holiday_name"),
+                    "early_close_name": market_session.get("early_close_name"),
+                },
+            )
+            log_struct(
+                "market_closed",
+                {
+                    "date": date_str,
+                    "broker": BROKER_TYPE,
+                    "reason": reason,
+                    "holiday_name": market_session.get("holiday_name"),
+                },
+            )
+            SnapshotDB().save_decision(
+                date_str=date_str,
+                payload={
+                    "status": "market_closed",
+                    "reasoning": f"市场休市（{reason}），今日不生成新策略。",
+                    "plan": {},
+                    "orders": [],
+                    "positions_after": self.positions,
+                    "cash_after": self.cash,
+                    "market_session": market_session,
+                    "run_start_ts": run_start_ts,
+                },
+            )
+            metrics["status"] = "market_closed"
+            return None
+
+        t_rag0 = time.perf_counter()
+        macro_data = self.retriever.fetch_macro_data()
+        fundamental_data = self.retriever.fetch_fundamental_data()
+        news_data = self.retriever.fetch_news()
+        market_data_dict = self.retriever.fetch_market_data()
+        filing_data = self.retriever.fetch_filing_data()
+        metrics["rag_sec"] = round(time.perf_counter() - t_rag0, 6)
+        provider_status = self.retriever.get_provider_status()
+        metrics["provider_status"] = provider_status
+        log_struct("rag_provider_status", provider_status)
+        
+        market_context_str = market_data_dict["context_string"]
+        current_prices = market_data_dict["prices"]
+        filing_context_str = filing_data.get("context_string", "") if isinstance(filing_data, dict) else str(filing_data)
+        
+        if not current_prices:
+            logger.warning("❌ 无法获取最新价格，今日暂停调仓。")
+            log_struct("daily_abort_no_prices", {"date": date_str, "broker": BROKER_TYPE}, level="WARNING")
+            metrics["status"] = "abort_no_prices"
+            return None
+
+        portfolio_value = self.cash
+        for ticker, shares in self.positions.items():
+            portfolio_value += shares * current_prices.get(ticker, 0)
+        
+        current_summary = [f"现金: ${self.cash:,.2f} ({self.cash/portfolio_value*100:.1f}%)"]
+        for ticker, shares in self.positions.items():
+            val = shares * current_prices.get(ticker, 0)
+            weight = val / portfolio_value if portfolio_value > 0 else 0
+            current_summary.append(f"{ticker}: {shares}股, 价值 ${val:,.2f} ({weight*100:.1f}%)")
+        current_positions_str = "\n".join(current_summary)
+        retrieval_route = self.llm.generate_retrieval_route(
+            news_context=news_data,
+            market_context=market_context_str,
+            macro_context=macro_data,
+            fundamental_context=fundamental_data,
+            current_positions_summary=current_positions_str,
+            filing_context=filing_context_str,
+            provider_status=provider_status,
+            mode=self.run_mode,
+        )
+        retrieval_route_context = _format_retrieval_route_context(retrieval_route)
+
+        SnapshotDB().save_rag(
+            date_str=date_str,
+            payload={
+                "macro": macro_data,
+                "fundamental": fundamental_data,
+                "news": news_data,
+                "market": market_data_dict,
+                "filings": filing_data,
+                "provider_status": provider_status,
+                "retrieval_route": retrieval_route,
+            },
+        )
+            
+        logger.info("-" * 60)
+        logger.info("📂 【RAG 组装完毕的小抄资料】")
+        logger.info(f"【当前持仓】:\n{current_positions_str}\n")
+        logger.info(f"【宏观数据】:\n{macro_data}\n")
+        logger.info(f"【基本面数据】:\n{fundamental_data}\n")
+        logger.info(f"【市场数据】:\n{market_context_str}\n")
+        logger.info(f"【新闻摘要】:\n{news_data[:200]}...\n")
+        logger.info(f"【SEC 公告证据】:\n{filing_context_str}\n")
+        logger.info(f"【检索路由建议】:\n{retrieval_route_context or '默认综合评估所有已接入证据源。'}\n")
+        logger.info("-" * 60)
+
+        return {
+            "market_session": market_session,
+            "macro_data": macro_data,
+            "fundamental_data": fundamental_data,
+            "news_data": news_data,
+            "market_data_dict": market_data_dict,
+            "filing_data": filing_data,
+            "provider_status": provider_status,
+            "market_context_str": market_context_str,
+            "current_prices": current_prices,
+            "filing_context_str": filing_context_str,
+            "portfolio_value": portfolio_value,
+            "current_positions_str": current_positions_str,
+            "retrieval_route": retrieval_route,
+            "retrieval_route_context": retrieval_route_context,
+        }
+
+    def _make_plan(self, date_str: str, metrics: dict, run_start_ts: str, ctx: dict) -> Optional[dict]:
+        """Phase 2-4: LLM 规划、校验、调仓、执行守卫。
+        返回计划 dict，或 None 表示提前退出（metrics 中已记录状态）。
+        """
+        market_session = ctx["market_session"]
+
+        t_llm0 = time.perf_counter()
+        strategy_plan = self.llm.generate_strategy(
+            ctx["news_data"],
+            ctx["market_context_str"],
+            ctx["macro_data"],
+            ctx["fundamental_data"],
+            ctx["current_positions_str"],
+            filing_context=ctx["filing_context_str"],
+            retrieval_route_context=ctx["retrieval_route_context"],
+        )
+        metrics["llm_sec"] = round(time.perf_counter() - t_llm0, 6)
+            
+        reasoning = strategy_plan.get("reasoning", "无理由")
+        target_weights = strategy_plan.get("allocations", {})
+        is_valid = strategy_plan.get("_valid", True)
+        errors = strategy_plan.get("_errors", [])
+        warnings = strategy_plan.get("_warnings", [])
+        strategy_ids = strategy_plan.get("selected_strategies", [])
+        llm_audit = strategy_plan.get("_audit", {}) if isinstance(strategy_plan.get("_audit", {}), dict) else {}
+        plan_snapshot = {k: v for k, v in strategy_plan.items() if not str(k).startswith("_")}
+        cash_ratio = self.cash / ctx["portfolio_value"] if ctx["portfolio_value"] > 0 else 0.0
+        metrics["llm_valid"] = bool(is_valid)
+        metrics["llm_errors"] = errors
+        metrics["llm_warning_count"] = len(warnings) if isinstance(warnings, list) else 0
+        metrics["prompt_version"] = llm_audit.get("prompt_version")
+        metrics["strategy_ids"] = strategy_ids if isinstance(strategy_ids, list) else []
+        metrics["cash_ratio"] = round(cash_ratio, 6)
+        log_struct(
+            "llm_plan",
+            {
+                "date": date_str,
+                "broker": BROKER_TYPE,
+                "cash_ratio": round(cash_ratio, 6),
+                "strategy_ids": strategy_ids if isinstance(strategy_ids, list) else [],
+                "valid": bool(is_valid),
+                "errors": errors,
+                "warnings": warnings,
+                "prompt_version": llm_audit.get("prompt_version"),
+                "model_endpoint": llm_audit.get("model_endpoint"),
+            },
+        )
+        
+        logger.info("\n💡 [LLM 策略报告]")
+        logger.info(f"逻辑推演: {reasoning}")
+        logger.info(f"目标权重: {target_weights}")
+        logger.info("-" * 60)
+
+        if not is_valid:
+            logger.error(f"🛑 [策略降级] LLM 输出未通过校验，今日暂停调仓。错误: {errors}")
+            log_struct("llm_invalid_skip_trade", {"date": date_str, "broker": BROKER_TYPE, "errors": errors}, level="WARNING")
+            SnapshotDB().save_decision(
+                date_str=date_str,
+                payload={
+                    "status": "invalid",
+                    "reasoning": reasoning,
+                    "plan": plan_snapshot,
+                    "llm_audit": llm_audit,
+                    "retrieval_route": ctx["retrieval_route"],
+                    "orders": [],
+                    "positions_after": self.positions,
+                    "cash_after": self.cash,
+                    "market_session": market_session,
+                    "run_start_ts": run_start_ts,
+                },
+            )
+            metrics["status"] = "invalid"
+            return None
+        
+        t_reb0 = time.perf_counter()
+        proposed_orders = PortfolioManager.rebalance(self.cash, self.positions, target_weights, ctx["current_prices"])
+        metrics["rebalance_sec"] = round(time.perf_counter() - t_reb0, 6)
+        turnover_ratio = 0.0
+        if ctx["portfolio_value"] > 0:
+            turnover_ratio = sum([float(o.get("amount", 0.0) or 0.0) for o in proposed_orders]) / float(ctx["portfolio_value"])
+        metrics["turnover"] = round(turnover_ratio, 6)
+        metrics["order_count"] = len(proposed_orders)
+        log_struct(
+            "orders_built",
+            {
+                "date": date_str,
+                "broker": BROKER_TYPE,
+                "order_count": len(proposed_orders),
+                "turnover": round(turnover_ratio, 6),
+                "cash_ratio": round(cash_ratio, 6),
+            },
+        )
+        would_submit_preview = _build_would_submit_preview(proposed_orders, market_session=market_session)
+        
+        if not proposed_orders:
+            logger.info("  -> 仓位已达标，今日无需调仓。")
+            log_struct("no_trade", {"date": date_str, "broker": BROKER_TYPE, "cash_ratio": round(cash_ratio, 6)})
+            SnapshotDB().save_decision(
+                date_str=date_str,
+                payload={
+                    "status": "no_trade",
+                    "reasoning": reasoning,
+                    "plan": plan_snapshot,
+                    "llm_audit": llm_audit,
+                    "retrieval_route": ctx["retrieval_route"],
+                    "orders": [],
+                    "positions_after": self.positions,
+                    "cash_after": self.cash,
+                    "market_session": market_session,
+                    "run_start_ts": run_start_ts,
+                },
+            )
+            metrics["status"] = "no_trade"
+            return None
+
+        market_session = get_market_session(
+            datetime.utcnow().replace(tzinfo=ZoneInfo("UTC")),
+            MARKET_TIMEZONE,
+            RTH_START,
+            RTH_END,
+            HALF_DAY_RTH_END,
+        )
+        metrics["rth_ok"] = bool(market_session.get("can_place_orders"))
+        metrics["market_state"] = market_session.get("market_state")
+        metrics["market_reason"] = market_session.get("session_reason")
+        metrics["market_half_day"] = bool(market_session.get("is_half_day"))
+        metrics["market_rth_end"] = market_session.get("effective_rth_end")
+        planning_reason = None
+        if ENFORCE_RTH and not ALLOW_OUTSIDE_RTH and not bool(market_session.get("can_place_orders")):
+            planning_reason = str(market_session.get("session_reason") or "out_of_window")
+        else:
+            planning_reason = get_submission_guard_reason(BROKER_TYPE, ENABLE_LIVE_TRADING)
+        if planning_reason:
+            logger.warning(f"⏸️ 当前仅允许生成计划，不会下单（{planning_reason}）。")
+            emit_event("agent", "WARN", "planning_only", planning_reason, {"date": date_str, "market_session": market_session})
+            log_struct("planning_only", {"date": date_str, "broker": BROKER_TYPE, "reason": planning_reason}, level="WARNING")
+            log_struct(
+                "would_submit_preview",
+                {
+                    "date": date_str,
+                    "broker": BROKER_TYPE,
+                    "reason": planning_reason,
+                    "outside_rth": bool(ALLOW_OUTSIDE_RTH),
+                    "order_count": len(would_submit_preview),
+                    "orders": would_submit_preview,
+                },
+            )
+            SnapshotDB().save_decision(
+                date_str=date_str,
+                payload={
+                    "status": "planning_only",
+                    "reasoning": reasoning,
+                    "plan": plan_snapshot,
+                    "llm_audit": llm_audit,
+                    "retrieval_route": ctx["retrieval_route"],
+                    "orders": proposed_orders,
+                    "would_submit_preview": would_submit_preview,
+                    "positions_after": self.positions,
+                    "cash_after": self.cash,
+                    "market_session": market_session,
+                    "planning_only_reason": planning_reason,
+                    "live_trading_enabled": bool(ENABLE_LIVE_TRADING),
+                    "run_start_ts": run_start_ts,
+                },
+            )
+            metrics["status"] = "planning_only"
+            return None
+
+        return {
+            "market_session": market_session,
+            "strategy_plan": strategy_plan,
+            "reasoning": reasoning,
+            "target_weights": target_weights,
+            "errors": errors,
+            "warnings": warnings,
+            "strategy_ids": strategy_ids,
+            "llm_audit": llm_audit,
+            "plan_snapshot": plan_snapshot,
+            "proposed_orders": proposed_orders,
+            "turnover_ratio": turnover_ratio,
+            "would_submit_preview": would_submit_preview,
+        }
+
+    def _execute_trades(self, date_str: str, metrics: dict, run_start_ts: str, ctx: dict, plan: dict) -> str:
+        """Phase 5: 订单执行、对账、账本与快照持久化。
+        返回执行状态字符串。
+        """
+        market_session = plan["market_session"]
+        before_cash = float(self.cash)
+        before_positions = dict(self.positions)
+        t_submit0 = time.perf_counter()
+        execution_report = self.broker.submit_orders(plan["proposed_orders"]) or []
+        metrics["submit_sec"] = round(time.perf_counter() - t_submit0, 6)
+
+        execution_summary = _classify_execution(execution_report)
+
+        after_cash = None
+        after_positions = None
+        t_rec0 = time.perf_counter()
+        for _ in range(3):
+            after_cash, after_positions = self.broker.get_account_summary()
+            rec = reconcile_execution(before_cash, before_positions, float(after_cash), dict(after_positions), execution_report)
+            if rec.get("ok"):
+                break
+            time.sleep(1.0)
+        metrics["reconcile_sec"] = round(time.perf_counter() - t_rec0, 6)
+
+        self.cash, self.positions = after_cash, after_positions
+        
+        logger.info(f"\n✅ 今日调仓完毕！对账完成，最新现金余额: ${self.cash:,.2f}")
+        logger.info(f"📊 最新真实持仓: {self.positions}")
+        
+        PortfolioDB().save_state(self.cash, self.positions)
+
+        reconciliation = reconcile_execution(before_cash, before_positions, float(self.cash), dict(self.positions), execution_report)
+        metrics["reconcile_ok"] = bool(reconciliation.get("ok"))
+        if not reconciliation.get("ok"):
+            logger.warning(f"⚠️ [对账差异] 成交回报与账户持仓不一致: {reconciliation.get('mismatched')}")
+            log_struct("reconcile_mismatch", {"date": date_str, "broker": BROKER_TYPE, "mismatched": reconciliation.get("mismatched")}, level="WARNING")
+        else:
+            log_struct("reconcile_ok", {"date": date_str, "broker": BROKER_TYPE})
+
+        ExecutionLedger().save(
+            date_str=date_str,
+            payload={
+                "before": {"cash": before_cash, "positions": before_positions},
+                "orders": plan["proposed_orders"],
+                "execution_report": execution_report,
+                "after": {"cash": self.cash, "positions": self.positions},
+                "reconciliation": reconciliation,
+            },
+        )
+
+        SnapshotDB().save_decision(
+            date_str=date_str,
+            payload={
+                "status": execution_summary.get("status"),
+                "reasoning": plan["reasoning"],
+                "plan": plan["plan_snapshot"],
+                "llm_audit": plan["llm_audit"],
+                "retrieval_route": ctx["retrieval_route"],
+                "orders": plan["proposed_orders"],
+                "execution_report": execution_report,
+                "execution_summary": execution_summary,
+                "reconciliation": reconciliation,
+                "positions_after": self.positions,
+                "cash_after": self.cash,
+                "market_session": market_session,
+                "run_start_ts": run_start_ts,
+            },
+        )
+        return execution_summary.get("status") or "traded"
+
     def run_daily_routine(self):
         date_str = datetime.now(ZoneInfo(MARKET_TIMEZONE)).date().isoformat()
         t0 = time.perf_counter()
@@ -140,426 +596,21 @@ class MacroQuantAgent:
         run_start_ts = str(heartbeat_run.get("started_at") or (datetime.utcnow().isoformat() + "Z"))
         metrics["run_start_ts"] = run_start_ts
         metrics["live_trading_enabled"] = bool(ENABLE_LIVE_TRADING)
-        market_session = None
 
         try:
-            # 0. 熔断检查
-            if self.check_kill_switch():
-                status = "kill_switch_locked"
-                log_struct(
-                    "kill_switch_locked",
-                    {
-                        "date": date_str,
-                        "broker": BROKER_TYPE,
-                        "run_mode": self.run_mode,
-                        "kill_switch_reason": self.kill_switch.load().get("reason"),
-                    },
-                    level="WARNING",
-                )
+            ctx = self._gather_context(date_str, metrics, run_start_ts)
+            if ctx is None:
+                status = metrics.get("status", "unknown")
                 return
 
-            market_session = get_market_session(
-                datetime.utcnow().replace(tzinfo=ZoneInfo("UTC")),
-                MARKET_TIMEZONE,
-                RTH_START,
-                RTH_END,
-                HALF_DAY_RTH_END,
-            )
-            metrics["market_state"] = market_session.get("market_state")
-            metrics["market_reason"] = market_session.get("session_reason")
-            metrics["trading_day"] = bool(market_session.get("is_trading_day"))
-            metrics["market_half_day"] = bool(market_session.get("is_half_day"))
-            metrics["market_rth_end"] = market_session.get("effective_rth_end")
-            log_struct(
-                "daily_start",
-                {
-                    "date": date_str,
-                    "broker": BROKER_TYPE,
-                    "market_state": market_session.get("market_state"),
-                    "market_reason": market_session.get("session_reason"),
-                    "holiday_name": market_session.get("holiday_name"),
-                    "early_close_name": market_session.get("early_close_name"),
-                },
-            )
-
-            if market_session.get("market_state") == "closed":
-                reason = str(market_session.get("session_reason") or "closed")
-                logger.info(f"📭 市场休市（{reason}），今日不生成新策略。")
-                emit_event(
-                    "market.session",
-                    "INFO",
-                    "closed",
-                    reason,
-                    {
-                        "date": date_str,
-                        "holiday_name": market_session.get("holiday_name"),
-                        "early_close_name": market_session.get("early_close_name"),
-                    },
-                )
-                log_struct(
-                    "market_closed",
-                    {
-                        "date": date_str,
-                        "broker": BROKER_TYPE,
-                        "reason": reason,
-                        "holiday_name": market_session.get("holiday_name"),
-                    },
-                )
-                status = "market_closed"
-                SnapshotDB().save_decision(
-                    date_str=date_str,
-                    payload={
-                        "status": "market_closed",
-                        "reasoning": f"市场休市（{reason}），今日不生成新策略。",
-                        "plan": {},
-                        "orders": [],
-                        "positions_after": self.positions,
-                        "cash_after": self.cash,
-                        "market_session": market_session,
-                        "run_start_ts": run_start_ts,
-                    },
-                )
+            plan = self._make_plan(date_str, metrics, run_start_ts, ctx)
+            if plan is None:
+                status = metrics.get("status", "unknown")
                 return
 
-            # 1. RAG 检索阶段
-            t_rag0 = time.perf_counter()
-            macro_data = self.retriever.fetch_macro_data()
-            fundamental_data = self.retriever.fetch_fundamental_data()
-            news_data = self.retriever.fetch_news()
-            market_data_dict = self.retriever.fetch_market_data()
-            filing_data = self.retriever.fetch_filing_data()
-            metrics["rag_sec"] = round(time.perf_counter() - t_rag0, 6)
-            provider_status = self.retriever.get_provider_status()
-            metrics["provider_status"] = provider_status
-            log_struct("rag_provider_status", provider_status)
-            
-            market_context_str = market_data_dict["context_string"]
-            current_prices = market_data_dict["prices"]
-            filing_context_str = filing_data.get("context_string", "") if isinstance(filing_data, dict) else str(filing_data)
-            
-            if not current_prices:
-                logger.warning("❌ 无法获取最新价格，今日暂停调仓。")
-                log_struct("daily_abort_no_prices", {"date": date_str, "broker": BROKER_TYPE}, level="WARNING")
-                status = "abort_no_prices"
-                return
+            status = self._execute_trades(date_str, metrics, run_start_ts, ctx, plan)
 
-            # 组装当前持仓信息喂给 LLM
-            portfolio_value = self.cash
-            for ticker, shares in self.positions.items():
-                portfolio_value += shares * current_prices.get(ticker, 0)
-            
-            current_summary = [f"现金: ${self.cash:,.2f} ({self.cash/portfolio_value*100:.1f}%)"]
-            for ticker, shares in self.positions.items():
-                val = shares * current_prices.get(ticker, 0)
-                weight = val / portfolio_value if portfolio_value > 0 else 0
-                current_summary.append(f"{ticker}: {shares}股, 价值 ${val:,.2f} ({weight*100:.1f}%)")
-            current_positions_str = "\n".join(current_summary)
-            retrieval_route = self.llm.generate_retrieval_route(
-                news_context=news_data,
-                market_context=market_context_str,
-                macro_context=macro_data,
-                fundamental_context=fundamental_data,
-                current_positions_summary=current_positions_str,
-                filing_context=filing_context_str,
-                provider_status=provider_status,
-                mode=self.run_mode,
-            )
-            retrieval_route_context = _format_retrieval_route_context(retrieval_route)
-
-            SnapshotDB().save_rag(
-                date_str=date_str,
-                payload={
-                    "macro": macro_data,
-                    "fundamental": fundamental_data,
-                    "news": news_data,
-                    "market": market_data_dict,
-                    "filings": filing_data,
-                    "provider_status": provider_status,
-                    "retrieval_route": retrieval_route,
-                },
-            )
-                
-            logger.info("-" * 60)
-            logger.info("📂 【RAG 组装完毕的小抄资料】")
-            logger.info(f"【当前持仓】:\n{current_positions_str}\n")
-            logger.info(f"【宏观数据】:\n{macro_data}\n")
-            logger.info(f"【基本面数据】:\n{fundamental_data}\n")
-            logger.info(f"【市场数据】:\n{market_context_str}\n")
-            logger.info(f"【新闻摘要】:\n{news_data[:200]}...\n")
-            logger.info(f"【SEC 公告证据】:\n{filing_context_str}\n")
-            logger.info(f"【检索路由建议】:\n{retrieval_route_context or '默认综合评估所有已接入证据源。'}\n")
-            logger.info("-" * 60)
-            
-            # 2. 增强生成阶段
-            t_llm0 = time.perf_counter()
-            strategy_plan = self.llm.generate_strategy(
-                news_data,
-                market_context_str,
-                macro_data,
-                fundamental_data,
-                current_positions_str,
-                filing_context=filing_context_str,
-                retrieval_route_context=retrieval_route_context,
-            )
-            metrics["llm_sec"] = round(time.perf_counter() - t_llm0, 6)
-                
-            # 3. 解析结果
-            reasoning = strategy_plan.get("reasoning", "无理由")
-            target_weights = strategy_plan.get("allocations", {})
-            is_valid = strategy_plan.get("_valid", True)
-            errors = strategy_plan.get("_errors", [])
-            warnings = strategy_plan.get("_warnings", [])
-            strategy_ids = strategy_plan.get("selected_strategies", [])
-            llm_audit = strategy_plan.get("_audit", {}) if isinstance(strategy_plan.get("_audit", {}), dict) else {}
-            plan_snapshot = {k: v for k, v in strategy_plan.items() if not str(k).startswith("_")}
-            cash_ratio = self.cash / portfolio_value if portfolio_value > 0 else 0.0
-            metrics["llm_valid"] = bool(is_valid)
-            metrics["llm_errors"] = errors
-            metrics["llm_warning_count"] = len(warnings) if isinstance(warnings, list) else 0
-            metrics["prompt_version"] = llm_audit.get("prompt_version")
-            metrics["strategy_ids"] = strategy_ids if isinstance(strategy_ids, list) else []
-            metrics["cash_ratio"] = round(cash_ratio, 6)
-            log_struct(
-                "llm_plan",
-                {
-                    "date": date_str,
-                    "broker": BROKER_TYPE,
-                    "cash_ratio": round(cash_ratio, 6),
-                    "strategy_ids": strategy_ids if isinstance(strategy_ids, list) else [],
-                    "valid": bool(is_valid),
-                    "errors": errors,
-                    "warnings": warnings,
-                    "prompt_version": llm_audit.get("prompt_version"),
-                    "model_endpoint": llm_audit.get("model_endpoint"),
-                },
-            )
-            
-            logger.info("\n💡 [LLM 策略报告]")
-            logger.info(f"逻辑推演: {reasoning}")
-            logger.info(f"目标权重: {target_weights}")
-            logger.info("-" * 60)
-
-            if not is_valid:
-                logger.error(f"🛑 [策略降级] LLM 输出未通过校验，今日暂停调仓。错误: {errors}")
-                log_struct("llm_invalid_skip_trade", {"date": date_str, "broker": BROKER_TYPE, "errors": errors}, level="WARNING")
-                status = "invalid"
-                SnapshotDB().save_decision(
-                    date_str=date_str,
-                    payload={
-                        "status": "invalid",
-                        "reasoning": reasoning,
-                        "plan": plan_snapshot,
-                        "llm_audit": llm_audit,
-                        "retrieval_route": retrieval_route,
-                        "orders": [],
-                        "positions_after": self.positions,
-                        "cash_after": self.cash,
-                        "market_session": market_session,
-                        "run_start_ts": run_start_ts,
-                    },
-                )
-                return
-            
-            # 4. 执行动态调仓 (Rebalancing)
-            t_reb0 = time.perf_counter()
-            proposed_orders = PortfolioManager.rebalance(self.cash, self.positions, target_weights, current_prices)
-            metrics["rebalance_sec"] = round(time.perf_counter() - t_reb0, 6)
-            turnover_ratio = 0.0
-            if portfolio_value > 0:
-                turnover_ratio = sum([float(o.get("amount", 0.0) or 0.0) for o in proposed_orders]) / float(portfolio_value)
-            metrics["turnover"] = round(turnover_ratio, 6)
-            metrics["order_count"] = len(proposed_orders)
-            log_struct(
-                "orders_built",
-                {
-                    "date": date_str,
-                    "broker": BROKER_TYPE,
-                    "order_count": len(proposed_orders),
-                    "turnover": round(turnover_ratio, 6),
-                    "cash_ratio": round(cash_ratio, 6),
-                },
-            )
-            would_submit_preview = _build_would_submit_preview(proposed_orders, market_session=market_session)
-            
-            if not proposed_orders:
-                logger.info("  -> 仓位已达标，今日无需调仓。")
-                log_struct("no_trade", {"date": date_str, "broker": BROKER_TYPE, "cash_ratio": round(cash_ratio, 6)})
-                status = "no_trade"
-                SnapshotDB().save_decision(
-                    date_str=date_str,
-                    payload={
-                        "status": "no_trade",
-                        "reasoning": reasoning,
-                        "plan": plan_snapshot,
-                        "llm_audit": llm_audit,
-                        "retrieval_route": retrieval_route,
-                        "orders": [],
-                        "positions_after": self.positions,
-                        "cash_after": self.cash,
-                        "market_session": market_session,
-                        "run_start_ts": run_start_ts,
-                    },
-                )
-                return
-
-            market_session = get_market_session(
-                datetime.utcnow().replace(tzinfo=ZoneInfo("UTC")),
-                MARKET_TIMEZONE,
-                RTH_START,
-                RTH_END,
-                HALF_DAY_RTH_END,
-            )
-            metrics["rth_ok"] = bool(market_session.get("can_place_orders"))
-            metrics["market_state"] = market_session.get("market_state")
-            metrics["market_reason"] = market_session.get("session_reason")
-            metrics["market_half_day"] = bool(market_session.get("is_half_day"))
-            metrics["market_rth_end"] = market_session.get("effective_rth_end")
-            planning_reason = None
-            if ENFORCE_RTH and not ALLOW_OUTSIDE_RTH and not bool(market_session.get("can_place_orders")):
-                planning_reason = str(market_session.get("session_reason") or "out_of_window")
-            else:
-                planning_reason = get_submission_guard_reason(BROKER_TYPE, ENABLE_LIVE_TRADING)
-            if planning_reason:
-                logger.warning(f"⏸️ 当前仅允许生成计划，不会下单（{planning_reason}）。")
-                emit_event("agent", "WARN", "planning_only", planning_reason, {"date": date_str, "market_session": market_session})
-                log_struct("planning_only", {"date": date_str, "broker": BROKER_TYPE, "reason": planning_reason}, level="WARNING")
-                log_struct(
-                    "would_submit_preview",
-                    {
-                        "date": date_str,
-                        "broker": BROKER_TYPE,
-                        "reason": planning_reason,
-                        "outside_rth": bool(ALLOW_OUTSIDE_RTH),
-                        "order_count": len(would_submit_preview),
-                        "orders": would_submit_preview,
-                    },
-                )
-                status = "planning_only"
-                SnapshotDB().save_decision(
-                    date_str=date_str,
-                    payload={
-                        "status": "planning_only",
-                        "reasoning": reasoning,
-                        "plan": plan_snapshot,
-                        "llm_audit": llm_audit,
-                        "retrieval_route": retrieval_route,
-                        "orders": proposed_orders,
-                        "would_submit_preview": would_submit_preview,
-                        "positions_after": self.positions,
-                        "cash_after": self.cash,
-                        "market_session": market_session,
-                        "planning_only_reason": planning_reason,
-                        "live_trading_enabled": bool(ENABLE_LIVE_TRADING),
-                        "run_start_ts": run_start_ts,
-                    },
-                )
-                return
-            
-            # 5. 执行订单并同步账本
-            before_cash = float(self.cash)
-            before_positions = dict(self.positions)
-            t_submit0 = time.perf_counter()
-            execution_report = self.broker.submit_orders(proposed_orders) or []
-            metrics["submit_sec"] = round(time.perf_counter() - t_submit0, 6)
-
-            def _classify_execution(report: list) -> dict:
-                if not isinstance(report, list) or len(report) == 0:
-                    return {"status": "submitted_no_report", "requested": 0, "filled": 0}
-
-                requested = 0
-                filled = 0
-                status_counts = {}
-                for r in report:
-                    if not isinstance(r, dict):
-                        continue
-                    try:
-                        req = int(float(r.get("requested") or 0))
-                    except Exception:
-                        req = 0
-                    try:
-                        fil = int(float(r.get("filled") or 0))
-                    except Exception:
-                        fil = 0
-                    requested += max(req, 0)
-                    filled += max(fil, 0)
-                    st = str(r.get("status") or "unknown")
-                    status_counts[st] = status_counts.get(st, 0) + 1
-
-                if requested <= 0:
-                    return {"status": "no_order", "requested": requested, "filled": filled, "status_counts": status_counts}
-                if filled <= 0:
-                    if any(k in status_counts for k in ["Rejected"]):
-                        s = "rejected"
-                    elif any(k in status_counts for k in ["Cancelled", "Inactive", "ApiCancelled"]):
-                        s = "cancelled"
-                    else:
-                        s = "unfilled"
-                    return {"status": s, "requested": requested, "filled": filled, "status_counts": status_counts}
-                if filled < requested:
-                    return {"status": "partial", "requested": requested, "filled": filled, "status_counts": status_counts}
-                return {"status": "filled", "requested": requested, "filled": filled, "status_counts": status_counts}
-
-            execution_summary = _classify_execution(execution_report)
-
-            after_cash = None
-            after_positions = None
-            t_rec0 = time.perf_counter()
-            for _ in range(3):
-                after_cash, after_positions = self.broker.get_account_summary()
-                rec = reconcile_execution(before_cash, before_positions, float(after_cash), dict(after_positions), execution_report)
-                if rec.get("ok"):
-                    break
-                time.sleep(1.0)
-            metrics["reconcile_sec"] = round(time.perf_counter() - t_rec0, 6)
-
-            self.cash, self.positions = after_cash, after_positions
-            
-            logger.info(f"\n✅ 今日调仓完毕！对账完成，最新现金余额: ${self.cash:,.2f}")
-            logger.info(f"📊 最新真实持仓: {self.positions}")
-            
-            PortfolioDB().save_state(self.cash, self.positions)
-
-            reconciliation = reconcile_execution(before_cash, before_positions, float(self.cash), dict(self.positions), execution_report)
-            metrics["reconcile_ok"] = bool(reconciliation.get("ok"))
-            if not reconciliation.get("ok"):
-                logger.warning(f"⚠️ [对账差异] 成交回报与账户持仓不一致: {reconciliation.get('mismatched')}")
-                log_struct("reconcile_mismatch", {"date": date_str, "broker": BROKER_TYPE, "mismatched": reconciliation.get("mismatched")}, level="WARNING")
-            else:
-                log_struct("reconcile_ok", {"date": date_str, "broker": BROKER_TYPE})
-
-            ExecutionLedger().save(
-                date_str=date_str,
-                payload={
-                    "before": {"cash": before_cash, "positions": before_positions},
-                    "orders": proposed_orders,
-                    "execution_report": execution_report,
-                    "after": {"cash": self.cash, "positions": self.positions},
-                    "reconciliation": reconciliation,
-                },
-            )
-
-            SnapshotDB().save_decision(
-                date_str=date_str,
-                payload={
-                    "status": execution_summary.get("status"),
-                    "reasoning": reasoning,
-                    "plan": plan_snapshot,
-                    "llm_audit": llm_audit,
-                    "retrieval_route": retrieval_route,
-                    "orders": proposed_orders,
-                    "execution_report": execution_report,
-                    "execution_summary": execution_summary,
-                    "reconciliation": reconciliation,
-                    "positions_after": self.positions,
-                    "cash_after": self.cash,
-                    "market_session": market_session,
-                    "run_start_ts": run_start_ts,
-                },
-            )
-            status = execution_summary.get("status") or "traded"
-            
         except Exception as e:
-            # 记录严重错误，并直接触发熔断锁死，防止下次定时任务在异常状态下继续跑
             fatal_error = str(e)
             self.trigger_kill_switch(
                 str(e),

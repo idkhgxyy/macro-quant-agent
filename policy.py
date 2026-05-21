@@ -1,3 +1,5 @@
+from typing import cast
+
 from config import (
     TECH_UNIVERSE,
     MIN_CASH_RATIO,
@@ -27,8 +29,9 @@ def get_investment_policy_text() -> str:
     for name, spec in RISK_EXPOSURE_GROUP_CAPS.items():
         if not isinstance(spec, dict):
             continue
-        tickers = spec.get("tickers") or []
-        max_sum = float(spec.get("max_sum") or 0.0)
+        spec_dict = cast(dict, spec)
+        tickers = spec_dict.get("tickers") or []
+        max_sum = float(spec_dict.get("max_sum") or 0.0)
         if tickers and max_sum > 0:
             exposure_lines.append(f"- {name}: {', '.join(tickers)} 合计不超过 {max_sum:.2f}")
     exposure_text = "\n".join(exposure_lines) if exposure_lines else "- 无额外分组暴露约束"

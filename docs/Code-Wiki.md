@@ -345,8 +345,12 @@ run_agent.py
 #### 6.1.1 凭证与外部接入
 
 - `ALPHA_VANTAGE_KEY`
-- `VOLCENGINE_API_KEY`
-- `VOLCENGINE_MODEL_ENDPOINT`
+- `DEEPSEEK_API_KEY` / `DEEPSEEK_MODEL` / `DEEPSEEK_BASE_URL`
+- `LLM_PROVIDER` — 控制 LLM 调用提供方（`deepseek` 或 `volcengine`），影响请求参数行为
+- `LLM_THINKING_TYPE` / `LLM_REASONING_EFFORT` — DeepSeek 推理模式参数
+- `VOLCENGINE_API_KEY` / `VOLCENGINE_MODEL_ENDPOINT` — 向后兼容别名，自动从 DeepSeek 配置回退
+- `LLM_BASE_URL` — OpenAI 兼容 API 地址
+- `SEC_EDGAR_USER_AGENT` — SEC EDGAR API 请求的 User-Agent 头
 - `IBKR_HOST`
 - `IBKR_PORT`
 - `IBKR_CLIENT_ID`
@@ -375,6 +379,7 @@ run_agent.py
 - `AGENT_SCHEDULE_TIME`
 - `AGENT_SCHEDULE_TIMEZONE`
 - `AGENT_SCHEDULE_POLL_SECONDS`
+- `AGENT_RUN_LOCK_STALE_SECONDS` — 运行锁陈旧判定阈值（秒）
 - `ENFORCE_RTH`
 - `RTH_START`
 - `RTH_END`
@@ -452,12 +457,13 @@ run_agent.py
 
 `RAGRetriever` 是整个数据层的核心对象，负责把多个数据源统一成 LLM 所需上下文。
 
-#### 7.1.1 负责的四类数据
+#### 7.1.1 负责的五类数据
 
 - 新闻 `news`
 - 市场数据 `market`
 - 宏观数据 `macro`
 - 基本面数据 `fundamental`
+- SEC 公告元数据 `filing`
 
 #### 7.1.2 支持的数据源
 
@@ -534,6 +540,15 @@ run_agent.py
 - 优先 Alpha Vantage 公司概览
 - 再回退到 yfinance 的 `stock.info`
 - 同时接入 `EarningsResearchAgent` 补充财报窗口信息
+
+##### `fetch_filing_data()`
+
+职责：
+
+- 通过 SEC EDGAR API 获取 TECH_UNIVERSE 中各股票的近期公告元数据
+- 仅覆盖 `8-K` / `10-Q` / `10-K` 三种公告类型
+- 输出结构化 evidence 行（包含 `source`、`ticker`、`quote`、`chunk_id`、`url`、`timestamp`）
+- 与 news/macro/market/fundamental 同样具备缓存、预算、冷却和降级链路
 
 #### 7.1.5 `RAGRetriever` 的架构价值
 
@@ -648,6 +663,41 @@ run_agent.py
 - 回测强调可继续跑通
 - 实盘强调宁可不交易也不误交易
 
+#### 8.1.5 `generate_retrieval_route(...)`
+
+职责：
+
+- 在 RAG 检索完成后、主策略生成之前，调用 LLM 判断本轮更该依赖哪些已接入数据源
+- 输入包括：各数据源的上下文摘要、provider health 快照
+- 输出 `focus_sources`（本轮优先关注的数据源）和 `avoid_sources`（建议降低权重的数据源），附带推理理由 `rationale`
+
+作用：
+
+- 让模型在证据源层面做一次轻量路由，避免盲目均等使用所有数据
+- 路由结果转化为文本上下文，再次传入主策略生成 Prompt
+- 失败时回退到规则化 fallback（优先 positions/market/macro）
+
+#### 8.1.6 `generate_review_summary(...)`
+
+职责：
+
+- 基于当日复盘事实（由 `utils/review.py` 产出），调用 LLM 生成结构化复盘摘要
+- 输出 `summary`（1-2 句概括）、`key_points`（关键证据/现象）、`risks`（主要风险或偏差）、`next_steps`（下一步跟踪点）
+
+作用：
+
+- 降低人工复盘参与度，提供接近"投研助理"的自然语言复盘
+- 失败时回退到规则化 fallback（基于状态和指标自动生成摘要）
+
+#### 8.1.7 降级与 fallback 函数
+
+模块中还包含两组 fallback 函数，确保 LLM 调用失败时系统仍能产出合理结果：
+
+- `build_retrieval_route_fallback()`：基于各数据源的缺失标记和 provider degraded 状态，自动判断优先/避免哪些数据源
+- `build_review_summary_fallback()`：基于运行状态、成交率、问题订单数、超时撤单等硬指标，自动生成复盘摘要
+
+两组 fallback 均会记录 `_audit` 元数据，确保降级路径可审计。
+
 ### 8.2 `llm/validator.py`
 
 `validate_and_clean_strategy_plan(plan)` 是模型输出进入执行层前的关键过滤器。
@@ -667,7 +717,7 @@ run_agent.py
 #### 8.2.2 注意点
 
 - 该函数会生成 `errors` 和 `warnings`
-- 大部分组合约束以“清洗 + 警告”的方式处理，而不是直接异常
+- 大部分组合约束以"清洗 + 警告"的方式处理，而不是直接异常
 - `MIN_CASH_RATIO` 在这里更多是提示候选违规，真正执行期仍会再次处理
 
 ### 8.3 LLM 层的设计价值
@@ -950,14 +1000,25 @@ run_agent.py
 
 - `utils/logger.py`
   - 配置控制台 + 文件日志
+  - 支持按大小滚动（RotatingFileHandler），通过 `LOG_MAX_BYTES` 与 `LOG_BACKUP_COUNT` 控制
 - `utils/structlog.py`
   - 追加结构化日志 `logs/structured.jsonl`
+  - 用于记录关键字段（date、broker、cash_ratio、strategy_ids、turnover、reconciliation）
 - `utils/retry.py`
   - 用 `tenacity` 包装重试
+  - 为外部请求统一加超时与指数退避重试
 - `utils/file_rotate.py`
   - 文本文件轮转
+  - 对 JSONL 事件/告警/指标文件提供按大小滚动能力
 - `utils/webhook.py`
-  - 发送 JSON webhook
+  - 发送 JSON webhook 通知
+  - 支持附带近期 alerts 摘要，便于手机端快速定位问题
+- `utils/run_lock.py`
+  - 单实例运行锁：通过 `runtime/agent_run.lock` 文件确保同一时间只有一个 daily agent 实例在运行
+  - 支持 `acquire()` / `release()` 操作
+  - 自动检测同机 PID 存活性，避免死进程残留锁阻塞后续运行
+  - 陈旧锁自动恢复：检测到 PID 不存在或跨机超时锁时自动清理
+  - `run_agent.py` 在启动前统一获取运行锁，并发启动返回 `already_running`
 
 ## 12. Dashboard 与报告层
 
@@ -1160,6 +1221,15 @@ core/agent.py
   -> utils/alerting.py
   -> utils/trading_hours.py
 
+run_agent.py
+  -> utils/heartbeat.py
+  -> utils/run_lock.py
+  -> config.py
+
+run_scheduler.py
+  -> utils/heartbeat.py
+  -> run_agent.py
+
 dashboard/server.py
   -> utils/review.py
   -> utils/heartbeat.py
@@ -1186,8 +1256,15 @@ pip install -r requirements.txt
 ```env
 ALPHA_VANTAGE_KEY=your_alpha_vantage_key_here
 
-VOLCENGINE_API_KEY=your_volcengine_api_key_here
-VOLCENGINE_MODEL_ENDPOINT=ep-xxxxxxxx-xxx
+DEEPSEEK_API_KEY=your_deepseek_api_key_here
+DEEPSEEK_MODEL=deepseek-v4-pro
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+
+LLM_PROVIDER=deepseek
+LLM_THINKING_TYPE=enabled
+LLM_REASONING_EFFORT=high
+
+MARKET_TIMEZONE=America/New_York
 
 IBKR_HOST=127.0.0.1
 IBKR_PORT=7497
@@ -1196,7 +1273,20 @@ IBKR_DATA_CLIENT_ID=11
 
 BROKER_TYPE=mock
 ENABLE_LIVE_TRADING=false
+
+SEC_EDGAR_USER_AGENT=isolation-research/0.1 contact@example.com
+
+AGENT_SCHEDULER_ENABLED=false
+AGENT_SCHEDULE_TIME=16:10
+AGENT_SCHEDULE_TIMEZONE=America/New_York
+AGENT_SCHEDULE_POLL_SECONDS=30
+AGENT_RUN_LOCK_STALE_SECONDS=21600
+
+DASHBOARD_TOKEN=
+ALERT_WEBHOOK_URL=
 ```
+
+旧的 `VOLCENGINE_*` 环境变量仍然保留兼容，但当前更推荐在演示和日常开发中使用 DeepSeek 官方 OpenAI 兼容接口。`LLM_PROVIDER` 控制底层调用行为（`deepseek` 时会附加 `thinking` 和 `reasoning_effort` 参数）。`SEC_EDGAR_USER_AGENT` 用于 SEC EDGAR API 请求的 User-Agent 头。
 
 ### 16.3 运行日常 Agent
 
@@ -1257,18 +1347,24 @@ python3 -m pytest -q
 ### 17.2 外部服务
 
 - Volcengine / BytePlus 大模型接口
+- DeepSeek 官方 OpenAI 兼容接口
 - Alpha Vantage
 - FRED
+- SEC EDGAR
 - yfinance
 - IBKR TWS / Gateway
 
-### 17.3 CI
+### 17.3 CI 与代码质量
 
-GitHub Actions 工作流会：
+GitHub Actions 工作流（`.github/workflows/ci.yml`）在每次 push 到 `main` 和 PR 时自动运行：
 
 - 安装 Python 3.11
-- 安装 `requirements.txt`
-- 运行 `pytest -q`
+- 安装 `requirements.txt` 及 `pytest`、`ruff`、`mypy`、`types-requests`
+- 运行 `ruff check .`（基于 `.ruff.toml` 的低噪声 bug-lint 规则：`F401`/`F541`/`F841`/`E741`，排除 `legacy/`）
+- 运行 `python3 -m mypy --explicit-package-bases core/agent.py execution/portfolio.py execution/broker.py execution/reconcile.py llm/validator.py`
+- 运行 `python3 -m pytest -q`
+
+Lint 规则刻意保持低噪声，只覆盖未使用导入、歧义变量名、缺失 f-string 占位符等易出问题模式。`mypy` type-check 也已加入 CI，覆盖 `core/agent.py`、`execution/portfolio.py`、`execution/broker.py`、`execution/reconcile.py`、`llm/validator.py` 五个核心模块。
 
 ## 18. 测试覆盖说明
 
@@ -1298,6 +1394,16 @@ GitHub Actions 工作流会：
   - 交易时段判断
 - `test_kill_switch_state.py`
   - 熔断状态持久化
+- `test_validator_core.py`
+  - LLM 输出校验器的基础清洗与组合构建规则
+- `test_run_lock.py`
+  - 运行锁并发拦截与陈旧锁恢复
+- `test_agent_integration.py`
+  - 全链路集成测试：检索→LLM→风控→Mock 执行→对账
+- `test_dashboard_review.py`
+  - Dashboard 日期回放与 review 路径对齐
+- `test_cache_db.py`
+  - 缓存 TTL 与状态读写
 
 结论：
 
@@ -1404,3 +1510,24 @@ GitHub Actions 工作流会：
 ## 22. 一句话总结
 
 这个仓库的本质不是“一个会选股的 LLM demo”，而是一个围绕 **LLM 组合规划** 构建的 **研究型量化执行闭环系统**：它把数据检索、策略生成、风控清洗、订单执行、对账留痕、运行告警和复盘展示连接在了一起。
+
+## 23. 文档索引
+
+本仓库包含多份文档，按阅读优先级和使用场景排列：
+
+| 文档 | 用途 | 适用对象 |
+|---|---|---|
+| `AGENT.md` | 仓库级 AI 编码代理操作手册：项目摘要、行为模型、安全约束、任务路由指引 | AI 编码代理（优先阅读） |
+| `CLAUDE.md` | Claude 专属操作层：工作风格偏好、变更建议、验证清单 | Claude 编码代理 |
+| `docs/Code-Wiki.md`（本文档） | 完整架构与代码库详解：分层说明、关键类与函数、依赖关系 | 深入理解项目的开发者 |
+| `README.md` / `README.zh-CN.md` | 项目概览、快速开始、能力展示 | 项目访客、面试官 |
+| `docs/SEC-EDGAR-Phase1.md` | SEC EDGAR 第一阶段接入的设计说明 | 了解 SEC EDGAR 数据源的开发者 |
+| `TASKS.md` | 内部开发任务进度跟踪表 | 项目维护者 |
+
+文档使用优先级：
+
+1. **AI 编码代理**：先读 `AGENT.md`，需要深入理解架构时参阅本文档
+2. **Claude 编码代理**：在 `AGENT.md` 基础上，补充阅读 `CLAUDE.md`
+3. **人类开发者**：先读 `README.md` 建立整体印象，再读本文档理解架构细节
+
+若文档与源码存在冲突，以源码为准，并及时更新对应文档。

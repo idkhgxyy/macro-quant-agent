@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, cast
 
 from config import (
     TECH_UNIVERSE,
@@ -99,11 +99,12 @@ def validate_and_clean_strategy_plan(plan: dict) -> tuple[dict, list[str], list[
         for group_name, spec in RISK_EXPOSURE_GROUP_CAPS.items():
             if not isinstance(spec, dict):
                 continue
-            members = [t for t in (spec.get("tickers") or []) if t in TECH_UNIVERSE]
+            spec_dict = cast(dict, spec)
+            members = [t for t in (spec_dict.get("tickers") or []) if t in TECH_UNIVERSE]
             if not members:
                 continue
             try:
-                cap = float(spec.get("max_sum") or 0.0)
+                cap = float(spec_dict.get("max_sum") or 0.0)
             except Exception:
                 cap = 0.0
             if cap <= 0:
