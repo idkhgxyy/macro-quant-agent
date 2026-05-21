@@ -1,3 +1,4 @@
+"""HeartbeatStore: tracks run start/end/failure state for concurrency guard and last-run health display."""
 import json
 import os
 import socket

@@ -1,3 +1,4 @@
+"""Size-based file rotation helper for JSONL event/metric/alert files."""
 import os
 
 

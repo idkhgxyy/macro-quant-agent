@@ -1,3 +1,4 @@
+"""BuildDayReview: assembles daily review facts (status, P&L, execution quality, reconciliation) from snapshots and ledger artifacts."""
 from collections import defaultdict
 from typing import Any, Dict, Optional
 

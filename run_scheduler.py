@@ -1,3 +1,5 @@
+"""Lightweight scheduler that polls the clock and launches run_agent.py when the configured daily window arrives."""
+
 import os
 import socket
 import time

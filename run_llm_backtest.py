@@ -1,3 +1,5 @@
+"""Backtest entrypoint: replays historical RAG snapshots through the LLM and portfolio pipeline to evaluate strategy stability."""
+
 from utils.logger import setup_logger
 logger = setup_logger(__name__)
 

@@ -1,3 +1,4 @@
+"""ExecutionLedger: persists daily order execution reports, before/after state, and reconciliation results."""
 import json
 import os
 from datetime import datetime

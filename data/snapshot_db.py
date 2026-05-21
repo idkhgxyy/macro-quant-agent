@@ -1,3 +1,4 @@
+"""SnapshotDB: point-in-time persistence for RAG context and daily decisions. Dual-writes to SQLite and JSON."""
 import json
 import os
 from datetime import datetime

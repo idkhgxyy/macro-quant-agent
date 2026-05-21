@@ -1,3 +1,4 @@
+"""RAGRetriever: fetches macro / news / market / fundamental / SEC EDGAR filing data with provider fallback, caching, cooldown, and budget controls."""
 from utils.logger import setup_logger
 logger = setup_logger(__name__)
 

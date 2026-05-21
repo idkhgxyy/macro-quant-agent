@@ -1,3 +1,4 @@
+"""EarningsResearchAgent: fetches earnings dates and guidance summary data from Alpha Vantage."""
 from datetime import datetime, timezone
 
 

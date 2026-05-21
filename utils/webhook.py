@@ -1,3 +1,4 @@
+"""Sends JSON payloads to external webhook URLs (e.g. mobile push notifications)."""
 import json
 import urllib.request
 

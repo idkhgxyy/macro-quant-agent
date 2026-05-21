@@ -1,3 +1,4 @@
+"""Vectorized backtest engine: replays historical snapshots and evaluates LLM allocation stability and rule compliance."""
 from utils.logger import setup_logger
 logger = setup_logger(__name__)
 

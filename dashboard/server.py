@@ -1,3 +1,4 @@
+"""Dashboard HTTP server: local API for reviewing decisions, RAG context, ledger, metrics, and provider health."""
 import json
 import os
 import sys

@@ -1,3 +1,4 @@
+"""Configures console + rotating-file logger for the application."""
 import logging
 from logging.handlers import RotatingFileHandler
 import os

@@ -1,3 +1,4 @@
+"""Reconciles execution reports against account state changes after each trading run."""
 from typing import Dict, List, Any
 
 from config import TECH_UNIVERSE

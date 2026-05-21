@@ -1,3 +1,4 @@
+"""All strategy and runtime parameters: universe, risk limits, broker config, provider keys, timezone, alert thresholds."""
 import os
 from dotenv import load_dotenv
 

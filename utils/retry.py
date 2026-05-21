@@ -1,3 +1,4 @@
+"""Tenacity-based retry wrapper with timeout and exponential backoff for external API calls."""
 from utils.logger import setup_logger
 logger = setup_logger(__name__)
 from utils.events import emit_event, classify_exception

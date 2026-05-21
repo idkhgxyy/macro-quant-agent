@@ -1,3 +1,4 @@
+"""Sub-strategy definitions with descriptions, trigger conditions, category, and asset constraints."""
 from config import TECH_UNIVERSE
 
 STRATEGY_CATALOG = [

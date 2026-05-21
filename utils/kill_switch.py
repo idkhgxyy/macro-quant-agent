@@ -1,3 +1,4 @@
+"""KillSwitchStore: persistent circuit-breaker that prevents agent execution after critical failures."""
 import json
 import os
 import tempfile

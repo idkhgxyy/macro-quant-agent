@@ -1,3 +1,4 @@
+"""Validates and cleans LLM strategy output: weight normalization, concentration limits, risk exposure caps, and evidence format checks."""
 from typing import Any, cast
 
 from config import (

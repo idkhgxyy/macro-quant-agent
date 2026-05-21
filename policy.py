@@ -1,3 +1,5 @@
+"""LLM prompt templates and systematic-evidence prompt assembly for the daily planning routine."""
+
 from typing import cast
 
 from config import (

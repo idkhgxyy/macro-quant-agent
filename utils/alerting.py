@@ -1,3 +1,4 @@
+"""Alert policy engine: evaluates cumulative failure thresholds, triggers webhook notifications, and optional auto-kill."""
 import json
 import os
 from datetime import datetime

@@ -1,3 +1,4 @@
+"""RunLock: file-based single-instance lock with PID liveness detection and stale-lock recovery."""
 import json
 import os
 import socket

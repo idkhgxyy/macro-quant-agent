@@ -1,3 +1,4 @@
+"""PortfolioManager: converts target weights to trade orders with risk constraints (single-stock cap, cash buffer, concentration limits, dead-zone filtering)."""
 from utils.logger import setup_logger
 logger = setup_logger(__name__)
 

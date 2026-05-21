@@ -1,3 +1,4 @@
+"""Market session detection: RTH / planning-only / closed states based on US market calendar and half-day rules."""
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 from typing import Dict, Tuple

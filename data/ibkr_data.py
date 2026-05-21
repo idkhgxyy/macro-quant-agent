@@ -1,3 +1,4 @@
+"""IBKR market-data helpers: fetches live prices/positions/account summary via ib_insync for the tech universe."""
 import asyncio
 from datetime import datetime
 

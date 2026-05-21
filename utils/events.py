@@ -1,3 +1,4 @@
+"""In-memory event ring buffer with JSONL persistence for runtime observability."""
 import json
 import os
 from datetime import datetime

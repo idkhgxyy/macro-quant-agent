@@ -1,3 +1,4 @@
+"""Appends structured JSONL logs with key fields for query-based inspection."""
 import json
 import os
 from datetime import datetime

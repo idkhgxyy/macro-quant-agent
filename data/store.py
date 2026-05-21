@@ -1,3 +1,4 @@
+"""SqliteStore: SQLite-backed persistence layer for snapshots, ledger, and metrics tables with WAL mode."""
 import json
 import os
 import sqlite3

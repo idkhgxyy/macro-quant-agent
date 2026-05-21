@@ -1,3 +1,4 @@
+"""Broker abstraction layer: BaseBroker interface, MockBroker for simulation, and IBKRBroker for live Interactive Brokers execution."""
 import asyncio
 import time
 from ib_insync import IB, Stock, MarketOrder, Trade

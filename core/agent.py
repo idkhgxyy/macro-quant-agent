@@ -1,3 +1,4 @@
+"""MacroQuantAgent: orchestrates the daily routine — market check, RAG retrieval, LLM planning, risk controls, broker submission, reconciliation, and observability."""
 from datetime import datetime
 import time
 from typing import Optional

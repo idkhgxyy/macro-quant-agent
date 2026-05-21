@@ -1,3 +1,5 @@
+"""Daily agent entrypoint: acquires run lock, configures broker, instantiates MacroQuantAgent and calls run_daily_routine()."""
+
 import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo

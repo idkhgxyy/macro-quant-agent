@@ -1,3 +1,4 @@
+"""Local JSON-based cache and position-state persistence for portfolio and provider data."""
 from utils.logger import setup_logger
 logger = setup_logger(__name__)
 

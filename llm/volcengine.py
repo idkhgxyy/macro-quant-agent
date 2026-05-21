@@ -1,3 +1,4 @@
+"""LLM client for OpenAI-compatible providers (DeepSeek / Volcengine). Handles strategy generation, retrieval routing, and review summarization with audit trails."""
 from utils.logger import setup_logger
 logger = setup_logger(__name__)
 

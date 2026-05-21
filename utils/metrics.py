@@ -1,3 +1,4 @@
+"""MetricsDB: appends per-run metrics (LLM latency, turnover, order count, broker) to SQLite and JSONL."""
 import json
 import os
 from datetime import datetime
