@@ -109,93 +109,163 @@ The project includes a lightweight operator console:
 ## Architecture
 
 ```text
-isolation/
-├── config.py
+.
+├── config.py / policy.py / strategy_registry.py     # 配置层 · Config
 ├── core/
-│   └── agent.py               # orchestration of retrieval, LLM, risk, execution
+│   ├── agent.py              # 编排器 · Orchestration (injects 4 services)
+│   ├── planning.py           # PlanningService — RAG + LLM + Rebalance
+│   ├── execution.py          # ExecutionService — Broker + Reconcile
+│   ├── persistence.py        # PersistenceService — Snapshot/Ledger/Metrics
+│   └── ops.py                # OpsService — Heartbeat/KillSwitch/Alerting
 ├── data/
-│   ├── retriever.py           # news / macro / market / fundamental context retrieval
-│   ├── earnings_agent.py      # earnings and guidance summary helper
-│   ├── snapshot_db.py         # point-in-time snapshot persistence
-│   └── cache.py               # local cache / state helpers
+│   ├── retriever.py           # 多 Provider 数据检索引擎
+│   ├── cache.py               # 本地缓存与模拟状态
+│   ├── snapshot_db.py         # JSON/SQLite 双写快照
+│   ├── store.py               # SqliteStore 统一存储
+│   ├── earnings_agent.py      # 盈利事件摘要
+│   └── ibkr_data.py           # IBKR 实时行情辅助
 ├── llm/
-│   ├── volcengine.py          # model client + audit trail + repair loop
-│   └── validator.py           # schema + allocation cleaning / constraints
+│   ├── volcengine.py          # LLM 客户端 + 审计 + 修复循环
+│   └── validator.py           # 输出校验 / 清洗 / 约束
 ├── execution/
-│   ├── portfolio.py           # target weights -> orders with risk constraints
-│   ├── broker.py              # MockBroker / IBKRBroker
-│   ├── ledger.py              # execution ledger persistence
-│   └── reconcile.py           # execution/account reconciliation
+│   ├── portfolio.py           # 目标权重 → 订单 (含风控约束)
+│   ├── broker.py              # BaseBroker / MockBroker / IBKRBroker
+│   ├── ledger.py              # 执行账本
+│   └── reconcile.py           # 对账校验
+├── legacy/
+│   └── agent.py               # LEGACY — 旧版 MacroQuantAgent (保留参考)
 ├── backtest/
-│   └── engine.py              # vectorized backtest engine
+│   └── engine.py               # 向量化回测引擎
 ├── dashboard/
-│   ├── server.py              # local HTTP API
-│   └── static/                # dashboard UI
-├── utils/
-│   ├── heartbeat.py
-│   ├── kill_switch.py
-│   ├── alerting.py
-│   ├── metrics.py
-│   └── review.py
-├── run_agent.py               # main daily routine entrypoint
-├── run_llm_backtest.py        # backtest entrypoint
-└── run_scheduler.py           # lightweight scheduled runner
+│   ├── server.py               # 本地 HTTP API
+│   └── static/                 # 前端 UI
+├── utils/                      # 运维与可观测性
+│   ├── heartbeat.py / kill_switch.py / alerting.py
+│   ├── metrics.py / review.py / trading_hours.py
+│   ├── run_lock.py / events.py / file_rotate.py
+│   └── structlog.py / retry.py / webhook.py
+├── run_agent.py                # 生产入口 (构建所有 Service 后调用 agent)
+├── run_llm_backtest.py         # 回测入口
+└── run_scheduler.py            # 轻量定时调度
 ```
 
-### Layered Architecture
+### Layered Architecture (Refactored)
 
 ```mermaid
 flowchart TB
-    Config["config.py / policy.py / strategy_registry.py<br/>配置层 · Config"]
+    subgraph Entry ["入口 · Entry"]
+        RA["run_agent.py<br/>build_agent()"]
+        RS["run_scheduler.py"]
+        BT["run_llm_backtest.py"]
+    end
 
-    Agent["core/agent.py · MacroQuantAgent<br/>编排层 · Orchestration"]
+    subgraph Config ["配置层 · Config"]
+        CP["config.py<br/>policy.py<br/>strategy_registry.py"]
+    end
 
-    RD["data/retriever.py / cache.py / snapshot_db.py<br/>数据检索层 · Data Layer"]
+    subgraph Orchestration ["编排层 · Orchestration"]
+        AG["core/agent.py<br/>MacroQuantAgent<br/>run_daily_routine()"]
+    end
 
-    LM["llm/volcengine.py / validator.py<br/>LLM 层 · LLM Layer"]
+    subgraph Services ["服务层 · Services (注入到编排器)"]
+        PL["core/planning.py<br/>PlanningService<br/>RAG + LLM + Rebalance"]
+        EX["core/execution.py<br/>ExecutionService<br/>提交 + 对账重试"]
+        PE["core/persistence.py<br/>PersistenceService<br/>快照 / 账本 / 指标"]
+        OP["core/ops.py<br/>OpsService<br/>心跳 / 熔断 / 告警"]
+    end
 
-    EX["execution/portfolio.py / broker.py / reconcile.py<br/>执行层 · Execution"]
+    subgraph DataLayer ["数据检索层 · Data Layer"]
+        RT["data/retriever.py<br/>多 Provider 引擎"]
+        CA["data/cache.py<br/>Tiered Cache"]
+    end
 
-    OP["utils/ · dashboard/ · reports/<br/>运维与可观测性层 · Operations & Observability"]
+    subgraph LLMLayer ["LLM 层 · LLM Layer"]
+        VC["llm/volcengine.py<br/>Prompt + 审计"]
+        VD["llm/validator.py<br/>硬约束校验"]
+    end
 
-    Config --> Agent
-    Agent --> RD
-    Agent --> LM
-    RD --> LM
-    LM --> EX
-    Agent --> EX
-    EX --> OP
+    subgraph ExecLayer ["执行层 · Execution"]
+        PO["execution/portfolio.py<br/>风控调仓"]
+        BR["execution/broker.py<br/>Mock / IBKR Broker"]
+        RC["execution/reconcile.py<br/>对账校验"]
+    end
 
-    style Config fill:#e3f2fd,stroke:#1565c0,color:#000
-    style Agent fill:#fff3e0,stroke:#e65100,color:#000
-    style RD fill:#e8f5e9,stroke:#2e7d32,color:#000
-    style LM fill:#f3e5f5,stroke:#6a1b9a,color:#000
-    style EX fill:#fce4ec,stroke:#c62828,color:#000
-    style OP fill:#fff8e1,stroke:#f9a825,color:#000
+    subgraph Storage ["持久化 · Storage"]
+        SN["data/snapshot_db.py<br/>data/store.py<br/>JSON + SQLite"]
+        LD["execution/ledger.py<br/>执行账本"]
+        MT["utils/metrics.py<br/>运行指标"]
+    end
+
+    subgraph Observability ["可观测性 · Ops"]
+        HB["utils/heartbeat.py"]
+        KS["utils/kill_switch.py"]
+        AL["utils/alerting.py"]
+        EV["utils/events.py"]
+        DB["dashboard/server.py<br/>Local API + UI"]
+    end
+
+    RA --> AG
+    RS --> AG
+    BT --> BT_PATH["backtest/engine.py"]
+
+    AG --> PL
+    AG --> EX
+    AG --> PE
+    AG --> OP
+
+    PL --> RT
+    PL --> CA
+    PL --> VC
+    PL --> VD
+    PL --> PO
+
+    EX --> BR
+    EX --> RC
+
+    PE --> SN
+    PE --> LD
+    PE --> MT
+
+    OP --> HB
+    OP --> KS
+    OP --> AL
+    OP --> EV
+
+    CP --> AG
+    DB -.->|读取| SN
+    DB -.->|读取| LD
+    DB -.->|读取| MT
+
+    style Entry fill:#e3f2fd,stroke:#1565c0,color:#000
+    style Config fill:#e8eaf6,stroke:#283593,color:#000
+    style Orchestration fill:#fff3e0,stroke:#e65100,color:#000
+    style Services fill:#fff8e1,stroke:#f9a825,color:#000
+    style DataLayer fill:#e8f5e9,stroke:#2e7d32,color:#000
+    style LLMLayer fill:#f3e5f5,stroke:#6a1b9a,color:#000
+    style ExecLayer fill:#fce4ec,stroke:#c62828,color:#000
+    style Storage fill:#e0f7fa,stroke:#00838f,color:#000
+    style Observability fill:#fce4ec,stroke:#c62828,color:#000
 ```
 
-### Daily Routine Pipeline
+### Daily Routine Pipeline (v2 — via Services)
 
 ```mermaid
 flowchart TD
-    START([run_agent.py]) --> KS{"熔断检查<br/>Kill Switch"}
-    KS -->|locked| EXIT1([退出])
-    KS -->|ok| MS["市场时段判断<br/>get_market_session"]
-    MS -->|closed| EXIT2([market_closed])
-    MS -->|open| RAG["RAG 检索<br/>五维数据"]
-    RAG --> ROUTE["检索路由"]
-    ROUTE --> SNAP["保存 RAG 快照"]
-    SNAP --> LLM_C["LLM 策略生成"]
-    LLM_C --> VAL{"校验通过?"}
-    VAL -->|no| EXIT3([invalid])
-    VAL -->|yes| REB["调仓计算<br/>PortfolioManager"]
-    REB --> ORD{"有订单?"}
-    ORD -->|no| EXIT4([no_trade])
-    ORD -->|yes| GUARD{"执行守卫"}
-    GUARD -->|blocked| EXIT5([planning_only])
-    GUARD -->|allowed| SUB["提交订单<br/>Broker"]
-    SUB --> RECON["对账 · 账本 · 快照"]
-    RECON --> FIN["Heartbeat · Metrics · Alerting"]
+    START([run_agent.py]) --> KS["OpsService.check_kill_switch()"]
+    KS -->|locked| EXIT1([kill_switch_locked])
+    KS -->|ok| MS["get_market_session()"]
+    MS -->|closed| EXIT2(["market_closed<br/>persistence.save_decision()"])
+    MS -->|open| PL1["PlanningService.retrieve_context()"]
+    PL1 -->|无价格| EXIT3([abort_no_prices])
+    PL1 --> SNAP["persistence.save_rag_snapshot()"]
+    SNAP --> PL2["PlanningService.generate_plan()"]
+    PL2 -->|invalid| EXIT4(["invalid<br/>persistence.save_decision()"])
+    PL2 -->|no_trade| EXIT5(["no_trade<br/>persistence.save_decision()"])
+    PL2 -->|ready| GUARD{"执行守卫"}
+    GUARD -->|blocked| EXIT6(["planning_only<br/>persistence.save_decision()"])
+    GUARD -->|allowed| E["ExecutionService.execute()"]
+    E --> R["persistence.save_execution_ledger()<br/>persistence.save_decision_snapshot()"]
+    R --> FIN["OpsService.finish_run()<br/>persistence.append_metrics()<br/>OpsService.evaluate_and_notify()"]
 
     style START fill:#e3f2fd,stroke:#1565c0,color:#000
     style EXIT1 fill:#ffebee,stroke:#c62828,color:#000
@@ -203,6 +273,7 @@ flowchart TD
     style EXIT3 fill:#ffebee,stroke:#c62828,color:#000
     style EXIT4 fill:#fff3e0,stroke:#e65100,color:#000
     style EXIT5 fill:#fff3e0,stroke:#e65100,color:#000
+    style EXIT6 fill:#fff3e0,stroke:#e65100,color:#000
     style FIN fill:#e8f5e9,stroke:#2e7d32,color:#000
 ```
 
