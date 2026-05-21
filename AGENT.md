@@ -72,6 +72,9 @@ Treat this path as the source of truth when reasoning about system behavior.
 
 - `core/agent.py`: orchestration of the daily run
 - `core/planning.py`: `PlanningService` — RAG retrieval, LLM strategy generation, portfolio rebalancing (extracted from agent.py, injected as optional dependency)
+- `core/execution.py`: `ExecutionService` — order submission, reconciliation loop, execution classification
+- `core/persistence.py`: `PersistenceService` — snapshot/ledger/metrics/state persistence (thin facade over data/* and utils/* stores)
+- `core/ops.py`: `OpsService` — heartbeat, kill switch, alerting, event emission
 - `run_agent.py`: main entrypoint for manual or scheduled daily runs
 - `run_scheduler.py`: polling scheduler
 - `run_llm_backtest.py`: backtest entrypoint
@@ -97,7 +100,6 @@ Treat this path as the source of truth when reasoning about system behavior.
 - `execution/broker.py`: `BaseBroker`, `MockBroker`, `IBKRBroker`
 - `execution/reconcile.py`: execution reconciliation
 - `execution/ledger.py`: execution ledger persistence
-- `core/execution.py`: `ExecutionService` — order submission, reconciliation loop, execution classification (extracted from agent.py, injected as optional dependency)
 
 ### Operations and Observability
 
