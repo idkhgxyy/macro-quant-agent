@@ -17,6 +17,10 @@ from data.retriever import RAGRetriever
 from llm.volcengine import VolcengineLLMClient
 from execution.broker import MockBroker, IBKRBroker
 from core.agent import MacroQuantAgent
+from core.planning import PlanningService
+from core.execution import ExecutionService as ExecutionSvc
+from core.persistence import PersistenceService
+from core.ops import OpsService
 from utils.heartbeat import HeartbeatStore
 from utils.run_lock import RunLock
 
@@ -44,8 +48,23 @@ def build_agent(run_mode: str = "manual") -> MacroQuantAgent:
         my_broker = MockBroker(initial_cash=saved_cash)
         my_broker.server_positions = saved_positions
 
-    # 3. 实例化核心智能体
-    return MacroQuantAgent(llm_client=llm_client, retriever=retriever, broker=my_broker, run_mode=run_mode)
+    # 3. 实例化核心服务层
+    planning_service = PlanningService(llm_client=llm_client, retriever=retriever)
+    execution_service = ExecutionSvc(broker=my_broker)
+    persistence_service = PersistenceService()
+    ops_service = OpsService()
+
+    # 4. 实例化核心智能体
+    return MacroQuantAgent(
+        llm_client=llm_client,
+        retriever=retriever,
+        broker=my_broker,
+        run_mode=run_mode,
+        planning_service=planning_service,
+        execution_service=execution_service,
+        persistence_service=persistence_service,
+        ops_service=ops_service,
+    )
 
 
 def main(run_mode: str = "manual"):

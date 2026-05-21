@@ -86,7 +86,7 @@ class AgentV2E2ETests(unittest.TestCase):
                 ops_service=OpsService(),
             )
             with patch("core.agent.get_market_session", side_effect=_open_market_session), \
-                 patch("core.agent.evaluate_and_notify", return_value={"triggered": False, "reason": None, "items": []}):
+                 patch("utils.alerting.evaluate_and_notify", return_value={"triggered": False, "reason": None, "items": []}):
                 agent.run_daily_routine()
 
             self.assertTrue(os.path.exists(os.path.join(tmpdir, "snapshots")))
@@ -117,7 +117,7 @@ class AgentV2E2ETests(unittest.TestCase):
             )
             closed_session = {"market_state": "closed", "session_reason": "weekend", "is_trading_day": False, "is_half_day": False, "effective_rth_end": "16:00", "can_place_orders": False, "holiday_name": None, "early_close_name": None}
             with patch("core.agent.get_market_session", side_effect=[closed_session]), \
-                 patch("core.agent.evaluate_and_notify", return_value={"triggered": False, "reason": None, "items": []}):
+                 patch("utils.alerting.evaluate_and_notify", return_value={"triggered": False, "reason": None, "items": []}):
                 agent.run_daily_routine()
             self.assertFalse(os.path.exists(os.path.join(tmpdir, "ledger", "execution_2026-05-20.json")))
             snap_files = os.listdir(os.path.join(tmpdir, "snapshots"))
@@ -141,7 +141,7 @@ class AgentV2E2ETests(unittest.TestCase):
             )
             OpsService.trigger_kill_switch(reason="pre_test_lock", source="test")
             with patch("core.agent.get_market_session", side_effect=_open_market_session), \
-                 patch("core.agent.evaluate_and_notify", return_value={"triggered": False, "reason": None, "items": []}):
+                 patch("utils.alerting.evaluate_and_notify", return_value={"triggered": False, "reason": None, "items": []}):
                 agent.run_daily_routine()
             OpsService().check_kill_switch()
             self.assertFalse(os.path.exists(os.path.join(tmpdir, "snapshots", "rag_2026-05-20.json")),

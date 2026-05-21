@@ -8,6 +8,10 @@ from unittest.mock import patch
 
 from config import TECH_UNIVERSE
 from core.agent import MacroQuantAgent
+from core.planning import PlanningService
+from core.execution import ExecutionService as ExecutionSvc
+from core.persistence import PersistenceService
+from core.ops import OpsService
 from execution.broker import MockBroker
 
 
@@ -227,15 +231,21 @@ class AgentIntegrationTests(unittest.TestCase):
     def test_run_daily_routine_happy_path_persists_full_execution_artifacts(self):
         with isolated_runtime() as tmpdir:
             broker = MockBroker(initial_cash=100000.0)
+            llm = FakeLLMValid()
+            retriever = FakeRetriever()
             agent = MacroQuantAgent(
-                llm_client=FakeLLMValid(),
-                retriever=FakeRetriever(),
+                llm_client=llm,
+                retriever=retriever,
                 broker=broker,
                 run_mode="test",
+                planning_service=PlanningService(llm_client=llm, retriever=retriever),
+                execution_service=ExecutionSvc(broker=broker),
+                persistence_service=PersistenceService(),
+                ops_service=OpsService(),
             )
 
             with patch("core.agent.get_market_session", side_effect=_open_market_session), patch(
-                "core.agent.evaluate_and_notify",
+                "utils.alerting.evaluate_and_notify",
                 return_value={"triggered": False, "items": []},
             ), patch("random.random", return_value=0.5):
                 agent.run_daily_routine()
@@ -267,15 +277,21 @@ class AgentIntegrationTests(unittest.TestCase):
     def test_run_daily_routine_invalid_llm_skips_execution_but_keeps_audit_trail(self):
         with isolated_runtime() as tmpdir:
             broker = MockBroker(initial_cash=100000.0)
+            llm = FakeLLMInvalid()
+            retriever = FakeRetriever()
             agent = MacroQuantAgent(
-                llm_client=FakeLLMInvalid(),
-                retriever=FakeRetriever(),
+                llm_client=llm,
+                retriever=retriever,
                 broker=broker,
                 run_mode="test",
+                planning_service=PlanningService(llm_client=llm, retriever=retriever),
+                execution_service=ExecutionSvc(broker=broker),
+                persistence_service=PersistenceService(),
+                ops_service=OpsService(),
             )
 
             with patch("core.agent.get_market_session", side_effect=_open_market_session), patch(
-                "core.agent.evaluate_and_notify",
+                "utils.alerting.evaluate_and_notify",
                 return_value={"triggered": False, "items": []},
             ):
                 agent.run_daily_routine()
@@ -297,15 +313,21 @@ class AgentIntegrationTests(unittest.TestCase):
     def test_run_daily_routine_planning_only_keeps_orders_but_skips_submission(self):
         with isolated_runtime() as tmpdir:
             broker = MockBroker(initial_cash=100000.0)
+            llm = FakeLLMValid()
+            retriever = FakeRetriever()
             agent = MacroQuantAgent(
-                llm_client=FakeLLMValid(),
-                retriever=FakeRetriever(),
+                llm_client=llm,
+                retriever=retriever,
                 broker=broker,
                 run_mode="test",
+                planning_service=PlanningService(llm_client=llm, retriever=retriever),
+                execution_service=ExecutionSvc(broker=broker),
+                persistence_service=PersistenceService(),
+                ops_service=OpsService(),
             )
 
             with patch("core.agent.get_market_session", side_effect=_open_market_session), patch(
-                "core.agent.evaluate_and_notify",
+                "utils.alerting.evaluate_and_notify",
                 return_value={"triggered": False, "items": []},
             ), patch("core.agent.BROKER_TYPE", "ibkr"), patch("core.agent.ENABLE_LIVE_TRADING", False):
                 agent.run_daily_routine()
@@ -330,15 +352,21 @@ class AgentIntegrationTests(unittest.TestCase):
     def test_run_daily_routine_planning_only_applies_portfolio_risk_controls(self):
         with isolated_runtime() as tmpdir:
             broker = MockBroker(initial_cash=100000.0)
+            llm = FakeLLMRisky()
+            retriever = FakeRetriever()
             agent = MacroQuantAgent(
-                llm_client=FakeLLMRisky(),
-                retriever=FakeRetriever(),
+                llm_client=llm,
+                retriever=retriever,
                 broker=broker,
                 run_mode="test",
+                planning_service=PlanningService(llm_client=llm, retriever=retriever),
+                execution_service=ExecutionSvc(broker=broker),
+                persistence_service=PersistenceService(),
+                ops_service=OpsService(),
             )
 
             with patch("core.agent.get_market_session", side_effect=_open_market_session), patch(
-                "core.agent.evaluate_and_notify",
+                "utils.alerting.evaluate_and_notify",
                 return_value={"triggered": False, "items": []},
             ), patch("core.agent.BROKER_TYPE", "ibkr"), patch("core.agent.ENABLE_LIVE_TRADING", False):
                 agent.run_daily_routine()
@@ -364,15 +392,21 @@ class AgentIntegrationTests(unittest.TestCase):
     def test_run_daily_routine_partial_problem_state_persists_execution_artifacts(self):
         with isolated_runtime() as tmpdir:
             broker = MockBroker(initial_cash=100000.0)
+            llm = FakeLLMValidDual()
+            retriever = FakeRetriever()
             agent = MacroQuantAgent(
-                llm_client=FakeLLMValidDual(),
-                retriever=FakeRetriever(),
+                llm_client=llm,
+                retriever=retriever,
                 broker=broker,
                 run_mode="test",
+                planning_service=PlanningService(llm_client=llm, retriever=retriever),
+                execution_service=ExecutionSvc(broker=broker),
+                persistence_service=PersistenceService(),
+                ops_service=OpsService(),
             )
 
             with patch("core.agent.get_market_session", side_effect=_open_market_session), patch(
-                "core.agent.evaluate_and_notify",
+                "utils.alerting.evaluate_and_notify",
                 return_value={"triggered": False, "items": []},
             ), patch("random.random", side_effect=[0.05, 0.5]):
                 agent.run_daily_routine()
@@ -403,15 +437,21 @@ class AgentIntegrationTests(unittest.TestCase):
                 initial_positions=_zero_positions(),
                 after_positions=_zero_positions(),
             )
+            llm = FakeLLMValid()
+            retriever = FakeRetriever()
             agent = MacroQuantAgent(
-                llm_client=FakeLLMValid(),
-                retriever=FakeRetriever(),
+                llm_client=llm,
+                retriever=retriever,
                 broker=broker,
                 run_mode="test",
+                planning_service=PlanningService(llm_client=llm, retriever=retriever),
+                execution_service=ExecutionSvc(broker=broker),
+                persistence_service=PersistenceService(),
+                ops_service=OpsService(),
             )
 
             with patch("core.agent.get_market_session", side_effect=_open_market_session), patch(
-                "core.agent.evaluate_and_notify",
+                "utils.alerting.evaluate_and_notify",
                 return_value={"triggered": False, "items": []},
             ):
                 agent.run_daily_routine()
@@ -455,15 +495,21 @@ class AgentIntegrationTests(unittest.TestCase):
                 initial_positions=_zero_positions(),
                 after_positions=_zero_positions(),
             )
+            llm = FakeLLMValid()
+            retriever = FakeRetriever()
             agent = MacroQuantAgent(
-                llm_client=FakeLLMValid(),
-                retriever=FakeRetriever(),
+                llm_client=llm,
+                retriever=retriever,
                 broker=broker,
                 run_mode="test",
+                planning_service=PlanningService(llm_client=llm, retriever=retriever),
+                execution_service=ExecutionSvc(broker=broker),
+                persistence_service=PersistenceService(),
+                ops_service=OpsService(),
             )
 
             with patch("core.agent.get_market_session", side_effect=_open_market_session), patch(
-                "core.agent.evaluate_and_notify",
+                "utils.alerting.evaluate_and_notify",
                 return_value={"triggered": False, "items": []},
             ):
                 agent.run_daily_routine()
@@ -507,15 +553,21 @@ class AgentIntegrationTests(unittest.TestCase):
                 initial_positions=_zero_positions(),
                 after_positions=_zero_positions(),
             )
+            llm = FakeLLMValid()
+            retriever = FakeRetriever()
             agent = MacroQuantAgent(
-                llm_client=FakeLLMValid(),
-                retriever=FakeRetriever(),
+                llm_client=llm,
+                retriever=retriever,
                 broker=broker,
                 run_mode="test",
+                planning_service=PlanningService(llm_client=llm, retriever=retriever),
+                execution_service=ExecutionSvc(broker=broker),
+                persistence_service=PersistenceService(),
+                ops_service=OpsService(),
             )
 
             with patch("core.agent.get_market_session", side_effect=_open_market_session), patch(
-                "core.agent.evaluate_and_notify",
+                "utils.alerting.evaluate_and_notify",
                 return_value={"triggered": False, "items": []},
             ):
                 agent.run_daily_routine()
