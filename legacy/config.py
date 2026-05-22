@@ -1,4 +1,15 @@
-"""All strategy and runtime parameters: universe, risk limits, broker config, provider keys, timezone, alert thresholds."""
+"""LEGACY — Original flat config.py (pre-package-split).
+
+This file is preserved for reference. It contains all configuration
+parameters in a single file: API keys, risk parameters, broker settings,
+scheduler config, and alert thresholds.
+
+All new code should use `from config import X` (resolved through
+config/__init__.py which delegates to config/secrets.py,
+config/risk.py, and config/broker.py).
+
+Do NOT import from this file for new code paths.
+"""
 import os
 from dotenv import load_dotenv
 

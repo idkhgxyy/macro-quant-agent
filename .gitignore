@@ -25,6 +25,8 @@ kill_switch.lock
 *.png
 !docs/assets/readme/*.png
 
+docs/*
+
 reports/daily_report_*.md
 reports/charts.html
 reports/llm_backtest_summary.md
