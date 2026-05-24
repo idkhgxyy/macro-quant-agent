@@ -82,10 +82,10 @@ class PlanningService:
         market_session: dict,
         date_str: str,
         run_mode: str,
-    ) -> Optional[dict]:
+    ) -> dict:
         """Fetch all data sources and generate a retrieval route.
 
-        Returns a context dict for downstream consumption, or None when
+        Returns a context dict with ``success`` set to False when
         critical data (prices) is unavailable.
         """
         t_rag0 = time.perf_counter()
@@ -105,7 +105,7 @@ class PlanningService:
         if not current_prices:
             logger.warning("无法获取最新价格，跳过调仓。")
             log_struct("daily_abort_no_prices", {"date": date_str, "broker": BROKER_TYPE}, level="WARNING")
-            return None
+            return {"success": False, "status": "abort_no_prices"}
 
         portfolio_value = float(cash)
         for ticker, shares in positions.items():
@@ -142,6 +142,7 @@ class PlanningService:
         logger.info("-" * 60)
 
         return {
+            "success": True,
             "rag_sec": rag_sec,
             "macro_data": macro_data,
             "fundamental_data": fundamental_data,
@@ -217,6 +218,7 @@ class PlanningService:
             logger.error(f"LLM 输出未通过校验，错误: {errors}")
             log_struct("llm_invalid_skip_trade", {"date": date_str, "broker": BROKER_TYPE, "errors": errors}, level="WARNING")
             return {
+                "success": False,
                 "status": "invalid",
                 "reasoning": reasoning,
                 "plan_snapshot": plan_snapshot,
@@ -254,6 +256,7 @@ class PlanningService:
             logger.info("仓位已达标，无需调仓。")
             log_struct("no_trade", {"date": date_str, "broker": BROKER_TYPE, "cash_ratio": round(cash_ratio, 6)})
             return {
+                "success": True,
                 "status": "no_trade",
                 "reasoning": reasoning,
                 "plan_snapshot": plan_snapshot,
@@ -271,6 +274,7 @@ class PlanningService:
             }
 
         return {
+            "success": True,
             "status": "ready",
             "reasoning": reasoning,
             "plan_snapshot": plan_snapshot,

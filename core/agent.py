@@ -140,10 +140,10 @@ class MacroQuantAgent:
                 date_str=date_str,
                 run_mode=self.run_mode,
             )
-            if ctx is None:
+            if not ctx.get("success"):
                 logger.warning("RAG 检索失败（无价格），跳过调仓。")
                 log_struct("daily_abort_no_prices", {"date": date_str, "broker": BROKER_TYPE}, level="WARNING")
-                status = "abort_no_prices"
+                status = ctx.get("status", "abort_no_prices")
                 return
 
             metrics["rag_sec"] = ctx["rag_sec"]

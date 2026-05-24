@@ -107,6 +107,7 @@ class ExecutionService:
             reconciliation = rec
 
         return {
+            "success": True,
             "execution_report": execution_report,
             "execution_summary": execution_summary,
             "reconciliation": reconciliation,

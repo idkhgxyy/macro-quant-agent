@@ -152,11 +152,12 @@ class PlanningServiceTests(unittest.TestCase):
         self.assertIn("retrieval_route", ctx)
         self.assertIn("retrieval_route_context", ctx)
         self.assertIn("current_prices", ctx)
+        self.assertTrue(ctx["success"])
         self.assertEqual(ctx["current_prices"]["AAPL"], 100.0)
         self.assertIn("current_positions_str", ctx)
         self.assertIn("provider_status", ctx)
 
-    def test_retrieve_context_returns_none_when_no_prices(self):
+    def test_retrieve_context_returns_error_dict_when_no_prices(self):
         svc = PlanningService(llm_client=FakeLLM(), retriever=FakeRetrieverNoPrices())
         session = FakeMarketSession(state="rth")
         ctx = svc.retrieve_context(
@@ -166,7 +167,8 @@ class PlanningServiceTests(unittest.TestCase):
             date_str="2026-05-20",
             run_mode="test",
         )
-        self.assertIsNone(ctx)
+        self.assertFalse(ctx["success"])
+        self.assertEqual(ctx["status"], "abort_no_prices")
 
     def test_generate_plan_returns_ready_with_orders(self):
         svc = PlanningService(llm_client=FakeLLM(), retriever=FakeRetriever())
