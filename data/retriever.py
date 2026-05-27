@@ -20,6 +20,12 @@ from utils.trading_hours import get_market_session
 from utils.retry import retry_call
 from utils.events import emit_event, classify_exception
 
+try:
+    from ddgs import DDGS
+    _DDGS_AVAILABLE = True
+except ImportError:
+    _DDGS_AVAILABLE = False
+
 class RAGRetriever:
     """RAG 数据检索器：负责抓取新闻、宏观、市场、基本面四维数据"""
     def __init__(self, alpha_vantage_key: str):
@@ -755,6 +761,56 @@ class RAGRetriever:
             return "今日暂无重大宏观新闻发布。"
         return "\n\n".join(f"标题: {item.get('title', '')}\n摘要: {item.get('summary', '')}" for item in data["feed"])
 
+    def _fetch_news_via_websearch(self) -> str:
+        if not _DDGS_AVAILABLE:
+            raise ValueError("ddgs not installed")
+
+        _PRIORITY_SOURCES = [
+            "reuters.com", "bloomberg.com", "cnbc.com",
+            "barrons.com", "finance.yahoo.com", "wsj.com",
+        ]
+        site_filter = " OR ".join(f"site:{s}" for s in _PRIORITY_SOURCES)
+
+        seen_titles = set()
+        items = []
+        for ticker in TECH_UNIVERSE:
+            query = f"{ticker} stock news company earnings analyst ({site_filter})"
+            try:
+                results = list(DDGS().text(query, max_results=2))
+                for r in results:
+                    title = str(r.get("title") or "").strip()
+                    body = str(r.get("body") or "").strip()
+                    href = str(r.get("href") or "").strip()
+                    if not title or title in seen_titles:
+                        continue
+                    seen_titles.add(title)
+
+                    source_domain = href.split("/")[2] if "://" in href else "unknown"
+                    confidence = "high" if source_domain in ["reuters.com", "bloomberg.com", "wsj.com"] else "medium"
+                    items.append({
+                        "ticker": ticker,
+                        "title": title,
+                        "snippet": body,
+                        "source": source_domain,
+                        "url": href,
+                        "confidence": confidence,
+                    })
+            except Exception:
+                continue
+
+        if not items:
+            raise ValueError("websearch returned no results")
+
+        lines = []
+        for item in items:
+            tag = f"[{item['confidence']}]" if item["confidence"] == "high" else "[med]"
+            lines.append(f"- {tag} {item['ticker']}: {item['title']} (来源: {item['source']})")
+            snippet = item["snippet"][:300]
+            if snippet:
+                lines.append(f"  {snippet}")
+
+        return "\n".join(lines)
+
     def _fetch_market_via_yfinance(self) -> dict:
         data = retry_call(lambda: yf.download(TECH_UNIVERSE, period="1mo", progress=False)["Close"], attempts=2, min_wait=0.5, max_wait=3.0)
         market_context = []
@@ -925,9 +981,13 @@ class RAGRetriever:
         return degraded_result
         
     def fetch_news(self) -> str:
+        providers = []
+        if _DDGS_AVAILABLE:
+            providers.append(("websearch", self._fetch_news_via_websearch))
+        providers.append(("alphavantage", self._fetch_news_from_alphavantage))
         return self._fetch_with_providers(
             "news", "news",
-            providers=[("alphavantage", self._fetch_news_from_alphavantage)],
+            providers=providers,
             cadence="daily",
             ttl_fn=self._cache_ttl_for_news,
             degraded_result="新闻获取失败。",

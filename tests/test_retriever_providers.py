@@ -97,8 +97,10 @@ class RetrieverProviderTests(unittest.TestCase):
             self.retriever.cache.set("news", "cached news", ttl_seconds=1)
 
         with patch("data.cache.time.time", return_value=10_000):
-            with patch("data.retriever.retry_call", side_effect=RuntimeError("rate limited")):
-                text = self.retriever.fetch_news()
+            with patch("data.retriever.DDGS") as mock_ddgs:
+                mock_ddgs.return_value.text.return_value = []
+                with patch("data.retriever.retry_call", side_effect=RuntimeError("rate limited")):
+                    text = self.retriever.fetch_news()
 
         self.assertEqual(text, "cached news")
 
@@ -179,9 +181,11 @@ class RetrieverProviderTests(unittest.TestCase):
             )
 
         with patch("data.cache.time.time", return_value=1100):
-            with patch.object(self.retriever, "_is_ready_for_daily_refresh", return_value=True):
-                with patch("data.retriever.requests.get", side_effect=AssertionError("should not call Alpha Vantage")):
-                    text = self.retriever.fetch_news()
+            with patch("data.retriever.DDGS") as mock_ddgs:
+                mock_ddgs.return_value.text.return_value = []
+                with patch.object(self.retriever, "_is_ready_for_daily_refresh", return_value=True):
+                    with patch("data.retriever.requests.get", side_effect=AssertionError("should not call Alpha Vantage")):
+                        text = self.retriever.fetch_news()
 
         self.assertEqual(text, "budget stale news")
         status = self.retriever.get_provider_status().get("news", {})
@@ -200,9 +204,11 @@ class RetrieverProviderTests(unittest.TestCase):
             )
 
         with patch("data.cache.time.time", return_value=1100):
-            with patch.object(self.retriever, "_is_ready_for_daily_refresh", return_value=True):
-                with patch("data.retriever.requests.get", side_effect=AssertionError("should not call Alpha Vantage")):
-                    text = self.retriever.fetch_news()
+            with patch("data.retriever.DDGS") as mock_ddgs:
+                mock_ddgs.return_value.text.return_value = []
+                with patch.object(self.retriever, "_is_ready_for_daily_refresh", return_value=True):
+                    with patch("data.retriever.requests.get", side_effect=AssertionError("should not call Alpha Vantage")):
+                        text = self.retriever.fetch_news()
 
         self.assertEqual(text, "near-limit stale news")
         status = self.retriever.get_provider_status().get("news", {})
