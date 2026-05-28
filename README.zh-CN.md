@@ -455,20 +455,33 @@ open http://127.0.0.1:8010
 
 `legacy/` 目录仅保留早期实验，不属于当前主链路。
 
-## 路线图
+## 项目状态
 
-目前最值得继续改造的方向：
+**本项目已进入维护模式。** 核心链路（RAG → LLM 规划 → 组合风控 → 券商执行 → 对账 → Dashboard）已完整跑通，并通过 IBKR TWS 模拟盘实单验证。所有改进清单项目已完成。
 
-- 提升数据源稳定性与降级策略
-- 加强回测可信度与成本模型
-- 继续加强 CI、lint 和 type-check 覆盖
-- 从文件状态迁移到 SQLite / Postgres
-- 引入真正的向量库 RAG
-- 增加多日 Dashboard 回放与执行质量分析
-- 将 `MacroQuantAgent` 拆分为更细粒度的 service 层
-- 引入多策略集成（子策略加权/投票）
+### 已完成改进项
 
-更细的任务拆分见 `TASKS.md`。
+| 方向 | 概要 |
+|---|---|
+| 架构重构 | 283 行单体 `run_daily_routine()` 拆为 4 个注入 Service；旧代码保留在 `legacy/` |
+| 数据层 | 1300 行 `retriever.py` 引入 `_fetch_with_providers()` 通用引擎，WebSearch 新闻源替代 Alpha Vantage |
+| 类型安全 | 核心模块通过 mypy 严格模式 |
+| 持久化 | SQLite 接入，JSON/JSONL 保留给 Dashboard 读取 |
+| 收益归因 | 新增 `portfolio_attribution` 字段与高光摘要 |
+| 错误处理 | 所有 Service 方法统一返回 `{"success": bool, "status": "...", ...}` |
+| Dashboard 测试 | 17 个 API 集成测试 + 7 个 Playwright E2E 测试 |
+| 配置拆分 | 单文件 `config.py` 拆为 `config/secrets.py` / `risk.py` / `broker.py` |
+| IBKR 实单 | TWS 模拟盘 3 笔市价单（SELL NVDA/BUY AAPL/BUY TSLA）全部成交并完成对账 |
+
+### 明确不做的方向
+
+| 方向 | 理由 |
+|---|---|
+| 多策略集成 | LLM 已在单次推理中融合多逻辑，硬编码模板降低灵活性 |
+| 向量 RAG | 语义检索适合问答，量化场景依赖结构化事实与实时行情 |
+| 生产级调度（APScheduler） | 轻量轮询在 mock 模式已足够；IBKR 模式可通过 TWS 自带定时策略替代 |
+
+详细的改进记录与项目评估请见 [docs/Project-Review.md](docs/Project-Review.md)。
 
 ## CI 与代码质量
 

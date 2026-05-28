@@ -455,20 +455,33 @@ open http://127.0.0.1:8010
 
 The `legacy/` directory only preserves earlier experiments and is not part of the current production path of the project.
 
-## Roadmap
+## Project Status
 
-The next upgrades that would most improve the repo are:
+**This project is in maintenance mode.** The core pipeline (RAG → LLM planning → portfolio risk control → broker execution → reconciliation → Dashboard) is fully operational and has been validated with live IBKR paper trades on TWS. All items from the original improvement checklist have been completed.
 
-- improve data-source reliability and fallback strategy
-- strengthen backtest credibility and cost modeling
-- strengthen CI, lint, and type-checking coverage
-- move from file-based state to SQLite / Postgres
-- add real vector-store-backed RAG
-- add multi-day dashboard replay and execution-quality analytics
-- decompose `MacroQuantAgent` into finer-grained service layers
-- introduce multi-strategy integration with voting/weighting across sub-strategies
+### Completed improvements (since v5)
 
-Detailed internal task tracking is maintained in `TASKS.md`.
+| Area | Summary |
+|---|---|
+| Architecture | Monolithic 283-line `run_daily_routine()` decomposed into 4 injected Service classes (Planning, Execution, Persistence, Ops); `legacy/` preserves originals |
+| Data layer | 1300-line `retriever.py` refactored with a common `_fetch_with_providers()` engine, WebSearch news source replacing Alpha Vantage |
+| Type safety | `mypy --strict` clean across core modules |
+| Persistence | SQLite via `data/store.py`, JSON/JSONL kept for Dashboard readability |
+| Attribution | `portfolio_attribution` fields with highlight extraction |
+| Error handling | All Service methods return `{"success": bool, "status": "...", ...}` — no more `return None` ambiguity |
+| Dashboard tests | 17 API integration tests + 7 Playwright e2e tests covering date replay and multi-day compare |
+| Config | Single `config.py` split into `config/secrets.py`, `risk.py`, `broker.py`; original preserved in `legacy/config.py` |
+| Broker | IBKR TWS paper-trade verified with 3 live market orders (SELL NVDA, BUY AAPL, BUY TSLA), full reconciliation OK |
+
+### Deliberately not pursued
+
+| Direction | Rationale |
+|---|---|
+| Multi-strategy integration | LLM already fuses multiple logics in a single inference; hardcoded strategy templates reduce flexibility |
+| Vector RAG | Semantic retrieval suits Q&A, not quant workflows that rely on structured facts and real-time prices |
+| Production scheduler (APScheduler) | Lightweight polling is adequate for mock mode; TWS' own scheduled strategies can replace the scheduler in IBKR mode |
+
+Detailed project review and design decisions are maintained in `docs/Project-Review.md`.
 
 ## CI and Code Quality
 
