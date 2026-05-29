@@ -465,7 +465,7 @@ The `legacy/` directory only preserves earlier experiments and is not part of th
 |---|---|
 | Architecture | Monolithic 283-line `run_daily_routine()` decomposed into 4 injected Service classes (Planning, Execution, Persistence, Ops); `legacy/` preserves originals |
 | Data layer | 1300-line `retriever.py` refactored with a common `_fetch_with_providers()` engine, WebSearch news source replacing Alpha Vantage |
-| Type safety | `mypy --strict` clean across core modules |
+| Type safety | mypy clean across key planning, execution, and validation modules |
 | Persistence | SQLite via `data/store.py`, JSON/JSONL kept for Dashboard readability |
 | Attribution | `portfolio_attribution` fields with highlight extraction |
 | Error handling | All Service methods return `{"success": bool, "status": "...", ...}` — no more `return None` ambiguity |

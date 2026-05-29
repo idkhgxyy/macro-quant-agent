@@ -25,6 +25,23 @@ from utils.heartbeat import HeartbeatStore
 from utils.run_lock import RunLock
 
 
+def validate_config():
+    required_vars = {
+        "ALPHA_VANTAGE_KEY": "数据检索（Alpha Vantage）",
+        "VOLCENGINE_API_KEY": "LLM 策略生成（Volcengine）",
+    }
+    missing = []
+    for var, purpose in required_vars.items():
+        value = globals().get(var)
+        if not value:
+            missing.append(f"  - {var}（用于 {purpose}）")
+    if missing:
+        logger.warning("缺少以下环境变量，部分功能可能受限：\n" + "\n".join(missing))
+    else:
+        logger.info("✅ 关键环境变量校验通过。")
+    return len(missing) == 0
+
+
 def build_agent(run_mode: str = "manual") -> MacroQuantAgent:
     # 1. 实例化各个独立模块
     retriever = RAGRetriever(alpha_vantage_key=ALPHA_VANTAGE_KEY)
@@ -90,6 +107,7 @@ def main(run_mode: str = "manual"):
         logger.warning("♻️ 检测到陈旧运行锁，已自动清理并继续本次启动。")
 
     try:
+        validate_config()
         agent = build_agent(run_mode=run_mode)
 
         # 4. 运行今日交易循环

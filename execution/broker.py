@@ -1,5 +1,6 @@
 """Broker abstraction layer: BaseBroker interface, MockBroker for simulation, and IBKRBroker for live Interactive Brokers execution."""
 import asyncio
+import random
 import time
 from ib_insync import IB, Stock, MarketOrder, Trade
 from utils.logger import setup_logger
@@ -294,7 +295,6 @@ class MockBroker(BaseBroker):
             price = order["price"]
             trade_amount = shares * price
             
-            import random
             if random.random() < 0.1:  # 10% 概率拒单
                 logger.warning(f"  ❌ [券商拒单] 订单 {action} {shares} 股 {ticker} 失败 (模拟网络异常/资金不足)！")
                 records.append({

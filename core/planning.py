@@ -56,7 +56,7 @@ def _build_would_submit_preview(orders: list[dict], *, market_session: Optional[
     return preview
 
 
-def _get_submission_guard_reason(broker_type: str, enable_live_trading: bool) -> Optional[str]:
+def get_submission_guard_reason(broker_type: str, enable_live_trading: bool) -> Optional[str]:
     if str(broker_type).lower() == "ibkr" and not bool(enable_live_trading):
         return "live_trading_disabled"
     return None

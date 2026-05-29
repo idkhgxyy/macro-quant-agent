@@ -1,5 +1,6 @@
 .env
 .env.*
+!.env.example
 env.list
 
 __pycache__/
@@ -28,6 +29,7 @@ kill_switch.lock
 !docs/assets/readme/*.png
 
 docs/*
+!docs/Interview-Prep.md
 
 reports/daily_report_*.md
 reports/charts.html

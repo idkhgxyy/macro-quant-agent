@@ -1,7 +1,7 @@
 """Tests for runtime safety guards: kill switch, market hours, planning-only enforcement."""
 import unittest
 
-from core.agent import get_submission_guard_reason
+from core.planning import get_submission_guard_reason
 
 
 class RuntimeGuardsTests(unittest.TestCase):

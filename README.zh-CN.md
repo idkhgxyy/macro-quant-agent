@@ -465,7 +465,7 @@ open http://127.0.0.1:8010
 |---|---|
 | 架构重构 | 283 行单体 `run_daily_routine()` 拆为 4 个注入 Service；旧代码保留在 `legacy/` |
 | 数据层 | 1300 行 `retriever.py` 引入 `_fetch_with_providers()` 通用引擎，WebSearch 新闻源替代 Alpha Vantage |
-| 类型安全 | 核心模块通过 mypy 严格模式 |
+| 类型安全 | 核心模块通过 mypy 类型检查 |
 | 持久化 | SQLite 接入，JSON/JSONL 保留给 Dashboard 读取 |
 | 收益归因 | 新增 `portfolio_attribution` 字段与高光摘要 |
 | 错误处理 | 所有 Service 方法统一返回 `{"success": bool, "status": "...", ...}` |
