@@ -1,6 +1,6 @@
 """Unit tests for IBKRBroker: connection, get_account_summary, submit_orders, timeout, and edge cases."""
 from unittest import TestCase
-from unittest.mock import patch, MagicMock, call, ANY
+from unittest.mock import patch, MagicMock
 from execution.broker import IBKRBroker
 
 
@@ -252,7 +252,6 @@ class TestIBKRBrokerSubmitOrders(TestCase):
         self.mock_ib.placeOrder.return_value = trade
         self.mock_ib.sleep.side_effect = None
 
-        original_time = __import__("time")
         with patch("execution.broker.time") as mock_time:
             mock_time.perf_counter.side_effect = [100.0, 100.01, 100.02, 120.0]
             mock_time.time.side_effect = [100.0, 120.0]
