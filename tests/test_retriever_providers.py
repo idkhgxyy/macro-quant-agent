@@ -119,7 +119,8 @@ class RetrieverProviderTests(unittest.TestCase):
 
         with patch("data.cache.time.time", return_value=1100):
             with patch("data.retriever.yf.download", return_value={"Close": frame}):
-                result = self.retriever.fetch_market_data()
+                with patch("data.retriever.BROKER_TYPE", "mock"):
+                    result = self.retriever.fetch_market_data()
 
         self.assertIn("AAPL", result.get("prices", {}))
         with patch("data.cache.time.time", return_value=1100):
@@ -143,7 +144,8 @@ class RetrieverProviderTests(unittest.TestCase):
         with patch("data.cache.time.time", return_value=1200):
             with patch.object(self.retriever, "_fetch_market_data_from_alpha_vantage", side_effect=RuntimeError("av down")):
                 with patch("data.retriever.yf.download", return_value={"Close": frame}):
-                    result = self.retriever.fetch_market_data()
+                    with patch("data.retriever.BROKER_TYPE", "mock"):
+                        result = self.retriever.fetch_market_data()
 
         self.assertIn("AAPL", result.get("prices", {}))
         with patch("data.cache.time.time", return_value=1200):
@@ -164,7 +166,8 @@ class RetrieverProviderTests(unittest.TestCase):
         with patch("data.cache.time.time", return_value=1100):
             with patch.object(self.retriever, "_is_ready_for_daily_refresh", return_value=False):
                 with patch("data.retriever.yf.download", side_effect=AssertionError("should not call yfinance")):
-                    result = self.retriever.fetch_market_data()
+                    with patch("data.retriever.BROKER_TYPE", "mock"):
+                        result = self.retriever.fetch_market_data()
 
         self.assertEqual(result["context_string"], "stale market")
         status = self.retriever.get_provider_status().get("market", {})
@@ -224,7 +227,8 @@ class RetrieverProviderTests(unittest.TestCase):
 
         with patch("data.cache.time.time", return_value=1200):
             with patch.object(self.retriever, "_fetch_market_data_from_alpha_vantage", return_value=result_payload):
-                result = self.retriever.fetch_market_data()
+                with patch("data.retriever.BROKER_TYPE", "mock"):
+                    result = self.retriever.fetch_market_data()
 
         self.assertEqual(result["context_string"], "fresh market")
         status = self.retriever.get_provider_status().get("market", {})
