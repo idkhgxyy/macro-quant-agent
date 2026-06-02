@@ -45,7 +45,7 @@ class PortfolioManager:
             target_weight = target_weights.get(ticker, 0.0)
             target_amount = portfolio_value * target_weight
             
-            current_shares = positions[ticker]
+            current_shares = positions.get(ticker, 0)
             current_price = current_prices[ticker]
             current_amount = current_shares * current_price
             current_weight = current_amount / portfolio_value if portfolio_value > 0 else 0
