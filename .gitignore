@@ -35,3 +35,5 @@ reports/daily_report_*.md
 reports/charts.html
 reports/llm_backtest_summary.md
 
+_agent_notes/
+

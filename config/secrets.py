@@ -1,6 +1,8 @@
 """API keys, LLM provider configuration, and third-party service credentials."""
+import logging
 import os
 
+logger = logging.getLogger(__name__)
 
 ALPHA_VANTAGE_KEY = os.getenv("ALPHA_VANTAGE_KEY")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
@@ -22,3 +24,12 @@ LLM_THINKING_TYPE = os.getenv("LLM_THINKING_TYPE", "enabled")
 LLM_REASONING_EFFORT = os.getenv("LLM_REASONING_EFFORT", "high")
 
 SEC_EDGAR_USER_AGENT = os.getenv("SEC_EDGAR_USER_AGENT", "")
+
+# Log effective LLM configuration at startup
+_masked_key = (VOLCENGINE_API_KEY[:6] + "****" + VOLCENGINE_API_KEY[-4:]) if VOLCENGINE_API_KEY and len(VOLCENGINE_API_KEY) > 10 else "(未配置)"
+logger.info(
+    f"📋 LLM 配置生效: provider={LLM_PROVIDER}, "
+    f"api_key={_masked_key}, "
+    f"base_url={LLM_BASE_URL}, "
+    f"model_endpoint={VOLCENGINE_MODEL_ENDPOINT or '(未配置)'}"
+)

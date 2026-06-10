@@ -5,8 +5,10 @@ import os
 # 交易日口径
 MARKET_TIMEZONE = os.getenv("MARKET_TIMEZONE", "America/New_York")
 
-# 投资池 (Universe)
-TECH_UNIVERSE = ["AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMZN", "TSLA", "PLTR", "MU"]
+# 投资池 (Universe) — 可通过环境变量 TECH_UNIVERSE 覆盖，逗号分隔
+_DEFAULT_UNIVERSE = ["AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMZN", "TSLA", "PLTR", "MU"]
+_env_universe = os.getenv("TECH_UNIVERSE", "")
+TECH_UNIVERSE = [t.strip().upper() for t in _env_universe.split(",") if t.strip()] if _env_universe else _DEFAULT_UNIVERSE
 
 # 初始模拟资金
 INITIAL_CAPITAL = 100000.0
@@ -33,12 +35,12 @@ RISK_EXPOSURE_GROUP_CAPS = {
 AUTO_LIQUIDATE_DUST = os.getenv("AUTO_LIQUIDATE_DUST", "false").lower() in ("1", "true", "yes")
 DUST_MAX_WEIGHT = float(os.getenv("DUST_MAX_WEIGHT", "0.01"))
 
-# 风控参数 (Risk Management)
-MIN_CASH_RATIO = 0.05
-MAX_DAILY_TURNOVER = 0.30
-DEADBAND_THRESHOLD = 0.05
-MAX_SINGLE_POSITION = 0.20
-MAX_API_ERRORS = 3
+# 风控参数 (Risk Management) — 均可通过同名环境变量覆盖
+MIN_CASH_RATIO = float(os.getenv("MIN_CASH_RATIO", "0.05"))
+MAX_DAILY_TURNOVER = float(os.getenv("MAX_DAILY_TURNOVER", "0.30"))
+DEADBAND_THRESHOLD = float(os.getenv("DEADBAND_THRESHOLD", "0.05"))
+MAX_SINGLE_POSITION = float(os.getenv("MAX_SINGLE_POSITION", "0.20"))
+MAX_API_ERRORS = int(os.getenv("MAX_API_ERRORS", "3"))
 
 # 交易时段控制
 ENFORCE_RTH = os.getenv("ENFORCE_RTH", "true").lower() in ("1", "true", "yes")

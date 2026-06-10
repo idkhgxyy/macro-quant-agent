@@ -15,31 +15,31 @@ from utils.metrics import MetricsDB
 class PersistenceService:
     """Unified persistence facade for daily-run artifacts.
 
-    Stateless: each method instantiates its own store (all are lightweight
-    JSON/SQLite writers). The caller provides the data; this service
-    handles where and how it is stored.
+    Instance-based for consistency with other services (PlanningService,
+    ExecutionService, OpsService) and to support dependency injection
+    in tests. Each store is created once at init.
     """
 
-    @staticmethod
-    def save_rag_snapshot(date_str: str, payload: dict):
-        SnapshotDB().save_rag(date_str=date_str, payload=payload)
+    def __init__(self):
+        self._snapshot_db = SnapshotDB()
+        self._ledger = ExecutionLedger()
+        self._portfolio_db = PortfolioDB()
+        self._metrics_db = MetricsDB()
 
-    @staticmethod
-    def save_decision_snapshot(date_str: str, payload: dict):
-        SnapshotDB().save_decision(date_str=date_str, payload=payload)
+    def save_rag_snapshot(self, date_str: str, payload: dict):
+        self._snapshot_db.save_rag(date_str=date_str, payload=payload)
 
-    @staticmethod
-    def load_decision_snapshot(date_str: str) -> Optional[dict]:
-        return SnapshotDB().load_decision(date_str)
+    def save_decision_snapshot(self, date_str: str, payload: dict):
+        self._snapshot_db.save_decision(date_str=date_str, payload=payload)
 
-    @staticmethod
-    def save_execution_ledger(date_str: str, payload: dict):
-        ExecutionLedger().save(date_str=date_str, payload=payload)
+    def load_decision_snapshot(self, date_str: str) -> Optional[dict]:
+        return self._snapshot_db.load_decision(date_str)
 
-    @staticmethod
-    def save_portfolio_state(cash: float, positions: dict):
-        PortfolioDB().save_state(cash, positions)
+    def save_execution_ledger(self, date_str: str, payload: dict):
+        self._ledger.save(date_str=date_str, payload=payload)
 
-    @staticmethod
-    def append_metrics(record: dict):
-        MetricsDB().append(record)
+    def save_portfolio_state(self, cash: float, positions: dict):
+        self._portfolio_db.save_state(cash, positions)
+
+    def append_metrics(self, record: dict):
+        self._metrics_db.append(record)

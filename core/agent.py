@@ -110,7 +110,8 @@ class MacroQuantAgent:
         except Exception as e:
             fatal_error = str(e)
             ops.trigger_kill_switch(str(e), source="agent.exception", trigger_event={"date": date_str, "broker": BROKER_TYPE, "run_mode": self.run_mode})
-            logger.error(f"致命错误，已熔断: {e}", exc_info=True)
+            logger.error(f"致命错误，已熔断: {e}")
+            logger.exception("异常堆栈详情：")
             status = "exception"
             raise
         finally:
