@@ -1,7 +1,7 @@
 """MacroQuantAgent: orchestrates the daily routine via injected PlanningService, ExecutionService, PersistenceService, and OpsService."""
 from datetime import datetime
 import time
-from typing import Optional
+from typing import Any, Optional
 from zoneinfo import ZoneInfo
 from utils.logger import setup_logger
 logger = setup_logger(__name__)
@@ -32,31 +32,35 @@ from utils.trading_hours import get_market_session
 class MacroQuantAgent:
     def __init__(
         self,
-        llm_client,
-        retriever,
+        llm_client: object,
+        retriever: object,
         broker: BaseBroker,
         run_mode: str = "manual",
         planning_service: Optional[PlanningService] = None,
         execution_service: Optional[ExecutionSvc] = None,
         persistence_service: Optional[PersistenceService] = None,
         ops_service: Optional[OpsService] = None,
-    ):
+    ) -> None:
         self.llm = llm_client
         self.retriever = retriever
         self.broker = broker
         self.run_mode = str(run_mode or "manual")
-        self._planning = planning_service
-        self._execution = execution_service
-        self._persistence = persistence_service
-        self._ops = ops_service
+        assert planning_service is not None
+        assert execution_service is not None
+        assert persistence_service is not None
+        assert ops_service is not None
+        self._planning: PlanningService = planning_service
+        self._execution: ExecutionSvc = execution_service
+        self._persistence: PersistenceService = persistence_service
+        self._ops: OpsService = ops_service
         self.cash, self.positions = self.broker.get_account_summary()
 
-    def run_daily_routine(self):
+    def run_daily_routine(self) -> None:
         date_str = datetime.now(ZoneInfo(MARKET_TIMEZONE)).date().isoformat()
         t0 = time.perf_counter()
         status = "unknown"
         fatal_error = None
-        metrics = {"date": date_str, "broker": BROKER_TYPE, "run_mode": self.run_mode}
+        metrics: dict[str, Any] = {"date": date_str, "broker": BROKER_TYPE, "run_mode": self.run_mode}
 
         ops = self._ops
         persistence = self._persistence
@@ -117,7 +121,7 @@ class MacroQuantAgent:
         finally:
             self._finalize_run(ops, persistence, heartbeat_run, status, fatal_error, metrics, date_str, t0, run_start_ts)
 
-    def _is_kill_switch_locked(self, ops, date_str) -> bool:
+    def _is_kill_switch_locked(self, ops: OpsService, date_str: str) -> bool:
         ks = ops.check_kill_switch()
         if ks["locked"]:
             logger.error(f"熔断已锁定: {ks['reason']}")
@@ -125,7 +129,7 @@ class MacroQuantAgent:
             return True
         return False
 
-    def _resolve_market_session(self, metrics) -> dict:
+    def _resolve_market_session(self, metrics: dict[str, Any]) -> dict:
         market_session = get_market_session(
             datetime.utcnow().replace(tzinfo=ZoneInfo("UTC")),
             MARKET_TIMEZONE,
@@ -141,10 +145,10 @@ class MacroQuantAgent:
         log_struct("daily_start", {"date": metrics["date"], "broker": BROKER_TYPE, "market_state": market_session.get("market_state"), "session_reason": market_session.get("session_reason")})
         return market_session
 
-    def _is_market_closed(self, market_session) -> bool:
+    def _is_market_closed(self, market_session: dict) -> bool:
         return market_session.get("market_state") == "closed"
 
-    def _persist_market_closed(self, persistence, date_str, market_session, run_start_ts):
+    def _persist_market_closed(self, persistence: PersistenceService, date_str: str, market_session: dict, run_start_ts: str) -> None:
         reason = str(market_session.get("session_reason") or "closed")
         logger.info(f"市场休市（{reason}），今日不生成新策略。")
         self._ops.emit_event("market.session", "INFO", "closed", reason, {"date": date_str})
@@ -160,7 +164,7 @@ class MacroQuantAgent:
             "run_start_ts": run_start_ts,
         })
 
-    def _retrieve_and_persist_context(self, planning, persistence, date_str, metrics, market_session) -> Optional[dict]:
+    def _retrieve_and_persist_context(self, planning: PlanningService, persistence: PersistenceService, date_str: str, metrics: dict[str, Any], market_session: dict) -> Optional[dict]:
         ctx = planning.retrieve_context(
             cash=float(self.cash),
             positions={k: float(v) for k, v in self.positions.items()},
@@ -187,7 +191,7 @@ class MacroQuantAgent:
         })
         return ctx
 
-    def _generate_plan(self, planning, ctx, date_str, metrics) -> dict:
+    def _generate_plan(self, planning: PlanningService, ctx: dict, date_str: str, metrics: dict[str, Any]) -> dict:
         plan_result = planning.generate_plan(
             cash=float(self.cash),
             positions={k: float(v) for k, v in self.positions.items()},
@@ -195,6 +199,7 @@ class MacroQuantAgent:
             date_str=date_str,
             run_mode=self.run_mode,
         )
+        assert plan_result is not None
 
         metrics["llm_sec"] = plan_result["llm_sec"]
         pll_audit = (plan_result.get("llm_audit") or {})
@@ -208,7 +213,7 @@ class MacroQuantAgent:
             metrics["rebalance_sec"] = plan_result["rebalance_sec"]
         return plan_result
 
-    def _handle_plan_gate(self, plan_result, persistence, ctx, date_str, market_session, run_start_ts) -> bool:
+    def _handle_plan_gate(self, plan_result: dict, persistence: PersistenceService, ctx: dict, date_str: str, market_session: dict, run_start_ts: str) -> bool:
         if plan_result["status"] != "invalid":
             return False
         logger.error("LLM 校验失败，跳过调仓。")
@@ -227,16 +232,16 @@ class MacroQuantAgent:
         })
         return True
 
-    def _apply_plan_metrics(self, plan_result, metrics) -> list:
+    def _apply_plan_metrics(self, plan_result: dict, metrics: dict[str, Any]) -> list:
         proposed_orders = plan_result.get("proposed_orders", [])
         metrics["order_count"] = len(proposed_orders)
         metrics["turnover"] = plan_result.get("turnover_ratio", 0.0)
         return proposed_orders
 
-    def _is_no_trade(self, plan_result) -> bool:
+    def _is_no_trade(self, plan_result: dict) -> bool:
         return plan_result["status"] == "no_trade"
 
-    def _persist_no_trade(self, persistence, plan_result, ctx, date_str, market_session, run_start_ts):
+    def _persist_no_trade(self, persistence: PersistenceService, plan_result: dict, ctx: dict, date_str: str, market_session: dict, run_start_ts: str) -> None:
         logger.info("仓位已达标，无需调仓。")
         persistence.save_decision_snapshot(date_str, {
             "status": "no_trade",
@@ -252,13 +257,13 @@ class MacroQuantAgent:
             "decision_prices": ctx["current_prices"],
         })
 
-    def _get_execution_guard_reason(self, market_session_recheck) -> Optional[str]:
+    def _get_execution_guard_reason(self, market_session_recheck: dict) -> Optional[str]:
         metrics_rth_ok = bool(market_session_recheck.get("can_place_orders"))
         if ENFORCE_RTH and not ALLOW_OUTSIDE_RTH and not metrics_rth_ok:
             return str(market_session_recheck.get("session_reason") or "out_of_window")
         return get_submission_guard_reason(BROKER_TYPE, ENABLE_LIVE_TRADING)
 
-    def _try_planning_only_gate(self, ops, persistence, proposed_orders, plan_result, ctx, date_str, run_start_ts, metrics) -> bool:
+    def _try_planning_only_gate(self, ops: OpsService, persistence: PersistenceService, proposed_orders: list, plan_result: dict, ctx: dict, date_str: str, run_start_ts: str, metrics: dict[str, Any]) -> bool:
         market_session_recheck = get_market_session(
             datetime.utcnow().replace(tzinfo=ZoneInfo("UTC")),
             MARKET_TIMEZONE,
@@ -295,7 +300,7 @@ class MacroQuantAgent:
         })
         return True
 
-    def _execute_and_persist(self, execution, persistence, proposed_orders, plan_result, ctx, date_str, run_start_ts, metrics):
+    def _execute_and_persist(self, execution: ExecutionSvc, persistence: PersistenceService, proposed_orders: list, plan_result: dict, ctx: dict, date_str: str, run_start_ts: str, metrics: dict[str, Any]) -> Optional[str]:
         market_session_recheck = getattr(self, "_market_session_recheck", None) or get_market_session(
             datetime.utcnow().replace(tzinfo=ZoneInfo("UTC")),
             MARKET_TIMEZONE,
@@ -358,7 +363,7 @@ class MacroQuantAgent:
         metrics["status"] = exec_result["execution_summary"].get("status") or "traded"
         return metrics["status"]
 
-    def _finalize_run(self, ops, persistence, heartbeat_run, status, fatal_error, metrics, date_str, t0, run_start_ts):
+    def _finalize_run(self, ops: OpsService, persistence: PersistenceService, heartbeat_run: dict, status: str, fatal_error: Optional[str], metrics: dict[str, Any], date_str: str, t0: float, run_start_ts: str) -> None:
         run_end_ts = datetime.utcnow().isoformat() + "Z"
         metrics["status"] = status
         metrics["total_sec"] = round(time.perf_counter() - t0, 6)

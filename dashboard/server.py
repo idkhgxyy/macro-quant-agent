@@ -246,15 +246,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _send_error(self, code: int, error: str, message: str = "", **extra):
+        """Send a unified error response: {"error": ..., "message": ..., **extra}."""
+        body = {"error": error, "message": message or error}
+        body.update(extra)
+        self._send_json(body, code)
+
     def _send_unauthorized(self):
-        self._send_json(
-            {
-                "error": "unauthorized",
-                "message": "dashboard token required",
-                "auth_required": True,
-            },
-            401,
-        )
+        self._send_error(401, "unauthorized", "Dashboard token required", auth_required=True)
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -264,7 +263,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             try:
                 self._handle_api(parsed)
             except Exception as e:
-                self._send_json({"error": str(e)}, 500)
+                self._send_error(500, "internal_error", str(e))
             return
         super().do_GET()
 
@@ -370,7 +369,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             n = int((qs.get("limit") or ["60"])[0])
             return self._send_json({"items": _compute_equity_series(n)})
 
-        return self._send_json({"error": "not_found"}, 404)
+        return self._send_error(404, "not_found", f"Unknown API path: {path}")
 
 
 def main():

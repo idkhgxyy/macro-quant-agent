@@ -25,7 +25,7 @@ class OpsService:
         )
 
     @staticmethod
-    def finish_run(run_id: str, status: str, error: Optional[str] = None, extra: Optional[dict] = None):
+    def finish_run(run_id: str, status: str, error: Optional[str] = None, extra: Optional[dict] = None) -> None:
         HeartbeatStore().finish_run(run_id=run_id, status=status, error=error, extra=extra)
 
     @staticmethod
@@ -45,7 +45,7 @@ class OpsService:
         source: str = "agent",
         trigger_event: Optional[dict] = None,
         lock_path: str = "kill_switch.lock",
-    ):
+    ) -> None:
         event_meta = trigger_event if isinstance(trigger_event, dict) else {}
         emit_event("agent", "CRITICAL", "kill_switch", reason, event_meta)
         KillSwitchStore(lock_path=lock_path).trigger(
@@ -56,7 +56,7 @@ class OpsService:
         )
 
     @staticmethod
-    def emit_event(category: str, severity: str, kind: str, message: str, meta: Optional[dict] = None):
+    def emit_event(category: str, severity: str, kind: str, message: str, meta: Optional[dict] = None) -> None:
         emit_event(category, severity, kind, message, meta)
 
     @staticmethod

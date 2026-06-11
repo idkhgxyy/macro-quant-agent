@@ -8,6 +8,8 @@ from unittest.mock import patch
 from contextlib import contextmanager
 import tempfile
 
+import pytest
+
 from config import TECH_UNIVERSE
 from core.agent import MacroQuantAgent
 from core.planning import PlanningService
@@ -69,6 +71,7 @@ def _isolated():
                 os.chdir(old)
 
 
+@pytest.mark.integration
 class AgentV2E2ETests(unittest.TestCase):
     def test_v2_happy_path_produces_all_artifacts(self):
         with _isolated() as tmpdir:

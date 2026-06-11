@@ -8,6 +8,8 @@ import json
 import os
 import time
 import threading
+
+import pytest
 import unittest
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
@@ -113,6 +115,7 @@ def _do_get(port: int, path: str, token: str = "") -> tuple:
     return resp.status, ct, body
 
 
+@pytest.mark.integration
 class DashboardAPITests(unittest.TestCase):
     """Test all 12 API endpoints via HTTP against a real server."""
 

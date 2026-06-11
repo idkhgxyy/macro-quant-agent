@@ -6,6 +6,8 @@ import unittest
 from contextlib import contextmanager
 from unittest.mock import patch
 
+import pytest
+
 from config import TECH_UNIVERSE
 from core.agent import MacroQuantAgent
 from core.planning import PlanningService
@@ -227,6 +229,7 @@ def _latest_date(tmpdir: str) -> str:
     return next(name[len("decision_") : -5] for name in os.listdir(os.path.join(tmpdir, "snapshots")) if name.startswith("decision_"))
 
 
+@pytest.mark.integration
 class AgentIntegrationTests(unittest.TestCase):
     def test_run_daily_routine_happy_path_persists_full_execution_artifacts(self):
         with isolated_runtime() as tmpdir:

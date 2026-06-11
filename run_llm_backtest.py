@@ -1,5 +1,7 @@
 """Backtest entrypoint: replays historical RAG snapshots through the LLM and portfolio pipeline to evaluate strategy stability."""
 
+import argparse
+
 from utils.logger import setup_logger
 logger = setup_logger(__name__)
 
@@ -117,12 +119,21 @@ def write_backtest_summary(summary: dict, path: str):
         f.write("\n".join(lines))
 
 def main():
+    parser = argparse.ArgumentParser(description="LLM 驱动的历史回测")
+    parser.add_argument("--days", type=int, default=None, help="回测交易日天数 (默认: 20, 最小: 3)")
+    parser.add_argument("--period", type=str, default=None, help="价格数据周期，如 3mo/6mo/1y (默认: 6mo)")
+    parser.add_argument("--report", type=str, default=None, help="报告图片保存路径 (默认: llm_backtest_report.png)")
+    parser.add_argument("--summary", type=str, default=None, help="摘要 Markdown 保存路径 (默认: reports/llm_backtest_summary.md)")
+    parser.add_argument("--no-synthetic", action="store_true", help="禁止使用合成价格（yfinance 失败时直接报错）")
+    args = parser.parse_args()
+
     logger.info("🚀 开始执行 LLM 驱动的历史回测 (LLM-Driven Backtest)...")
-    price_period = os.getenv("BACKTEST_PRICE_PERIOD", "6mo")
-    requested_days = _env_int("BACKTEST_SAMPLE_DAYS", 20, minimum=3)
-    report_path = os.getenv("BACKTEST_REPORT_PATH", "llm_backtest_report.png")
-    summary_path = os.getenv("BACKTEST_SUMMARY_PATH", os.path.join("reports", "llm_backtest_summary.md"))
-    allow_synthetic_prices = os.getenv("BACKTEST_ALLOW_SYNTHETIC_PRICES", "true").lower() in ("1", "true", "yes")
+    price_period = args.period or os.getenv("BACKTEST_PRICE_PERIOD", "6mo")
+    requested_days = args.days if args.days is not None else _env_int("BACKTEST_SAMPLE_DAYS", 20, minimum=3)
+    requested_days = max(requested_days, 3)
+    report_path = args.report or os.getenv("BACKTEST_REPORT_PATH", "llm_backtest_report.png")
+    summary_path = args.summary or os.getenv("BACKTEST_SUMMARY_PATH", os.path.join("reports", "llm_backtest_summary.md"))
+    allow_synthetic_prices = not args.no_synthetic and os.getenv("BACKTEST_ALLOW_SYNTHETIC_PRICES", "true").lower() in ("1", "true", "yes")
 
     # 1. 抓取历史数据
     logger.info("📥 正在下载历史行情数据...")

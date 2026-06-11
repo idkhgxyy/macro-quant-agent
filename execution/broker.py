@@ -17,13 +17,13 @@ class BaseBroker:
         """从券商拉取真实的现金和持仓。返回: (cash: float, positions: dict)"""
         raise NotImplementedError
         
-    def submit_orders(self, orders: list):
+    def submit_orders(self, orders: list) -> list:
         """向券商发送真实订单，并处理部分成交/拒单。orders 格式: [{"ticker": "AAPL", "action": "BUY", "shares": 10, "price": 150.0}]"""
         raise NotImplementedError
 
 class IBKRBroker(BaseBroker):
     """Interactive Brokers 真实/仿真券商适配器"""
-    def __init__(self, host='127.0.0.1', port=7497, client_id=1):
+    def __init__(self, host: str = '127.0.0.1', port: int = 7497, client_id: int = 1) -> None:
         self.host = host
         self.port = port
         self.client_id = client_id
@@ -35,7 +35,7 @@ class IBKRBroker(BaseBroker):
         except RuntimeError:
             asyncio.set_event_loop(asyncio.new_event_loop())
             
-    def _connect(self):
+    def _connect(self) -> None:
         if not self.ib.isConnected():
             logger.info(f"🔄 正在连接 IBKR TWS/Gateway ({self.host}:{self.port})...")
             try:
@@ -46,7 +46,7 @@ class IBKRBroker(BaseBroker):
                 emit_event("broker.ibkr", "CRITICAL", classify_exception(e), str(e), {"stage": "connect", "host": self.host, "port": self.port})
                 raise
                 
-    def _disconnect(self):
+    def _disconnect(self) -> None:
         if self.ib.isConnected():
             self.ib.disconnect()
             logger.info("🔌 已断开与 IBKR 的连接。")
@@ -91,7 +91,7 @@ class IBKRBroker(BaseBroker):
             return "submitted_no_fill"
         return normalized or "unknown"
 
-    def _record_status(self, rec: dict, status: str):
+    def _record_status(self, rec: dict, status: str) -> None:
         history = rec.get("status_history")
         if not isinstance(history, list):
             history = []
@@ -137,7 +137,7 @@ class IBKRBroker(BaseBroker):
         finally:
             self._disconnect()
 
-    def submit_orders(self, orders: list):
+    def submit_orders(self, orders: list) -> list:
         if not orders:
             logger.info("🏦 [IBKR 券商端] 今日无订单需要提交。")
             return []
@@ -190,7 +190,7 @@ class IBKRBroker(BaseBroker):
                 trade_records.append((trade, record))
                 submitted_mono = time.perf_counter()
 
-                def _on_status_update(t: Trade, rec: dict):
+                def _on_status_update(t: Trade, rec: dict) -> None:
                     rec["status"] = t.orderStatus.status
                     rec["filled"] = float(t.orderStatus.filled or 0.0)
                     rec["avg_fill_price"] = float(t.orderStatus.avgFillPrice or 0.0)
@@ -277,7 +277,7 @@ class IBKRBroker(BaseBroker):
 
 class MockBroker(BaseBroker):
     """【当前使用的】模拟券商，内部维护一个虚拟的券商服务器账本"""
-    def __init__(self, initial_cash=100000.0):
+    def __init__(self, initial_cash: float = 100000.0) -> None:
         self.server_cash = initial_cash
         self.server_positions = {ticker: 0 for ticker in TECH_UNIVERSE}
         
@@ -285,7 +285,7 @@ class MockBroker(BaseBroker):
         logger.info("🏦 [Broker 券商端] 正在从券商服务器拉取真实账户快照...")
         return self.server_cash, self.server_positions.copy()
         
-    def submit_orders(self, orders: list):
+    def submit_orders(self, orders: list) -> list:
         logger.info(f"🏦 [Broker 券商端] 收到 {len(orders)} 笔订单，正在模拟交易所撮合...")
         records = []
         for order in orders:

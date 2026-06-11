@@ -17,7 +17,7 @@ class ExecutionLedger:
         safe_date = date_str.replace("/", "-")
         return os.path.join(self.dirpath, f"execution_{safe_date}.json")
 
-    def save(self, date_str: str, payload: Dict[str, Any]):
+    def save(self, date_str: str, payload: Dict[str, Any]) -> None:
         try:
             self._store.save_ledger(date_str, payload)
         except Exception:

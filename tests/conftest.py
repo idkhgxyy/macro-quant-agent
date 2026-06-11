@@ -4,6 +4,17 @@ import tempfile
 
 import pytest
 
+
+# ---------------------------------------------------------------------------
+# Pytest markers
+# ---------------------------------------------------------------------------
+
+def pytest_configure(config):
+    """Register custom markers to avoid unknown marker warnings."""
+    config.addinivalue_line("markers", "unit: fast, isolated unit tests (no I/O, no network)")
+    config.addinivalue_line("markers", "integration: tests that span multiple modules or use real I/O")
+    config.addinivalue_line("markers", "slow: tests that take > 1 second to run")
+
 from config import TECH_UNIVERSE
 
 
