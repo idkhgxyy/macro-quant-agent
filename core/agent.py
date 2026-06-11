@@ -136,6 +136,7 @@ class MacroQuantAgent:
             RTH_START,
             RTH_END,
             HALF_DAY_RTH_END,
+            allow_outside_rth=ALLOW_OUTSIDE_RTH,
         )
         metrics["market_state"] = market_session.get("market_state")
         metrics["market_reason"] = market_session.get("session_reason")
@@ -270,6 +271,7 @@ class MacroQuantAgent:
             RTH_START,
             RTH_END,
             HALF_DAY_RTH_END,
+            allow_outside_rth=ALLOW_OUTSIDE_RTH,
         )
         metrics["rth_ok"] = bool(market_session_recheck.get("can_place_orders"))
 

@@ -111,6 +111,7 @@ def get_market_session(
     start_hhmm: str,
     end_hhmm: str,
     half_day_end_hhmm: str = "13:00",
+    allow_outside_rth: bool = False,
 ) -> Dict[str, object]:
     local = now.astimezone(ZoneInfo(tz))
     local_date = local.date()
@@ -154,7 +155,7 @@ def get_market_session(
         "timezone": tz,
         "is_trading_day": (not is_weekend) and (holiday_name is None),
         "can_generate_plan": market_state != "closed",
-        "can_place_orders": market_state == "open",
+        "can_place_orders": market_state == "open" or (allow_outside_rth and market_state == "planning_only"),
         "holiday_name": holiday_name,
         "early_close_name": early_close_name,
         "is_half_day": bool(early_close_name),

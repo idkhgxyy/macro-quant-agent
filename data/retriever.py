@@ -26,6 +26,12 @@ try:
 except ImportError:
     _DDGS_AVAILABLE = False
 
+try:
+    from data.anysearch_provider import fetch_news_via_anysearch, fetch_macro_via_anysearch
+    _ANYSEARCH_AVAILABLE = True
+except ImportError:
+    _ANYSEARCH_AVAILABLE = False
+
 class RAGRetriever:
     """RAG 数据检索器：负责抓取新闻、宏观、市场、基本面四维数据"""
     def __init__(self, alpha_vantage_key: str):
@@ -492,13 +498,24 @@ class RAGRetriever:
             "timeout": 20 * 60,
             "connect_failed": 20 * 60,
             "auth": 24 * 60 * 60,
-            "unknown": 30 * 60,
-        }.get(failure_type or "unknown", 30 * 60)
+            "unknown": 10 * 60,
+        }.get(failure_type or "unknown", 10 * 60)
+
+        # unknown 类型：根据连续失败次数递增冷却（1次10min, 2次20min, 3次40min...最大2h）
+        if failure_type == "unknown":
+            state = self._provider_state_snapshot(data_kind, "")
+            consecutive = 0
+            ps = state.get("providers") or []
+            for p in ps:
+                if p.get("last_error_type") == "unknown":
+                    consecutive += 1
+            if consecutive > 1:
+                base = min(base * (2 ** (consecutive - 1)), 2 * 60 * 60)
 
         if data_kind == "fundamental":
             if failure_type in {"rate_limit", "quota"}:
                 return 12 * 60 * 60
-            return max(base, 2 * 60 * 60)
+            return max(base, 10 * 60)
         if data_kind == "news":
             if failure_type in {"rate_limit", "quota"}:
                 return 2 * 60 * 60
@@ -695,7 +712,12 @@ class RAGRetriever:
         if ready:
             return None
 
-        logger.info(f"♻️ [RAG 检索] {data_kind} 尚未到刷新窗口，继续复用最近一次成功快照。")
+        # Stale cache 超过 4 小时时提升为 WARNING
+        if isinstance(age_seconds, (int, float)) and age_seconds > 4 * 3600:
+            hours = round(age_seconds / 3600, 1)
+            logger.warning(f"⚠️ [RAG 检索] {data_kind} 使用 {hours}h 前的缓存数据，可能已过时！")
+        else:
+            logger.info(f"♻️ [RAG 检索] {data_kind} 尚未到刷新窗口，继续复用最近一次成功快照。")
         self._trace_provider_attempt(data_kind, "stale_cache", "hit", detail)
         self._finish_provider_trace(data_kind, "stale_cache", "stale_cache", detail)
         self._set_provider_trace_meta(data_kind, age_seconds=round(float(age_seconds), 1) if age_seconds is not None else None)
@@ -760,6 +782,14 @@ class RAGRetriever:
         if "feed" not in data:
             return "今日暂无重大宏观新闻发布。"
         return "\n\n".join(f"标题: {item.get('title', '')}\n摘要: {item.get('summary', '')}" for item in data["feed"])
+
+    def _fetch_news_via_anysearch(self) -> str:
+        """Fetch news via AnySearch finance.us_stock vertical domain."""
+        return fetch_news_via_anysearch()
+
+    def _fetch_macro_via_anysearch(self) -> str:
+        """Fetch macro data via AnySearch finance.market vertical domain."""
+        return fetch_macro_via_anysearch()
 
     def _fetch_news_via_websearch(self) -> str:
         if not _DDGS_AVAILABLE:
@@ -982,6 +1012,8 @@ class RAGRetriever:
         
     def fetch_news(self) -> str:
         providers = []
+        if _ANYSEARCH_AVAILABLE:
+            providers.append(("anysearch", self._fetch_news_via_anysearch))
         if _DDGS_AVAILABLE:
             providers.append(("websearch", self._fetch_news_via_websearch))
         providers.append(("alphavantage", self._fetch_news_from_alphavantage))
@@ -1023,9 +1055,13 @@ class RAGRetriever:
                 degraded_result="宏观数据获取失败，假设处于中性宏观环境。",
                 log_prefix="🌍",
             )
+        providers = []
+        if _ANYSEARCH_AVAILABLE:
+            providers.append(("anysearch", self._fetch_macro_via_anysearch))
+        providers.extend([("fred", self._fetch_macro_data_from_fred), ("yfinance", self._fetch_macro_via_yfinance)])
         return self._fetch_with_providers(
             "macro", "macro_data",
-            providers=[("fred", self._fetch_macro_data_from_fred), ("yfinance", self._fetch_macro_via_yfinance)],
+            providers=providers,
             cadence="daily",
             ttl_fn=self._cache_ttl_for_macro,
             degraded_result="宏观数据获取失败，假设处于中性宏观环境。",

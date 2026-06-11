@@ -7,6 +7,7 @@ for the caller to persist and log.
 import time
 from typing import Optional
 
+from config import ALLOW_OUTSIDE_RTH
 from execution.broker import BaseBroker
 from execution.reconcile import reconcile_execution
 from utils.logger import setup_logger
@@ -45,7 +46,12 @@ def _classify_execution(report: list) -> dict:
         elif any(k in status_counts for k in ["Cancelled", "Inactive", "ApiCancelled"]):
             s = "cancelled"
         else:
-            s = "unfilled"
+            # 检查是否有待成交的订单（盘前/盘后提交）
+            pending_statuses = {"Submitted", "PreSubmitted", "PendingSubmit"}
+            if any(k in status_counts for k in pending_statuses):
+                s = "submitted_pending"
+            else:
+                s = "unfilled"
         return {"status": s, "requested": requested, "filled": filled, "status_counts": status_counts}
     if filled < requested:
         return {"status": "partial", "requested": requested, "filled": filled, "status_counts": status_counts}
@@ -105,6 +111,15 @@ class ExecutionService:
 
         if not reconciliation.get("ok"):
             reconciliation = rec
+
+        # 修正 reconcile_ok：如果所有订单被取消/拒绝，即使持仓无变化也不应视为对账成功
+        exec_status = execution_summary.get("status", "")
+        if exec_status in ("cancelled", "rejected"):
+            reconciliation["ok"] = False
+            reconciliation["all_cancelled"] = True
+        elif exec_status == "submitted_pending":
+            # 盘前提交的订单尚未成交，对账标记为 pending
+            reconciliation["pending_rth_fill"] = True
 
         return {
             "success": True,

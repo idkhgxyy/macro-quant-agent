@@ -1,8 +1,11 @@
 """Broker abstraction layer: BaseBroker interface, MockBroker for simulation, and IBKRBroker for live Interactive Brokers execution."""
 import asyncio
+import json
+import os
 import random
 import time
-from ib_insync import IB, Stock, MarketOrder, Trade
+from datetime import datetime
+from ib_insync import IB, Stock, MarketOrder, LimitOrder, Trade
 from utils.logger import setup_logger
 logger = setup_logger(__name__)
 from utils.events import emit_event, classify_exception
@@ -35,6 +38,36 @@ class IBKRBroker(BaseBroker):
         except RuntimeError:
             asyncio.set_event_loop(asyncio.new_event_loop())
             
+    def _persist_order_records(self, records: list) -> None:
+        """Persist order records to runtime/orders.json for post-disconnect tracking."""
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        orders_dir = os.path.join(project_root, "runtime")
+        os.makedirs(orders_dir, exist_ok=True)
+        orders_path = os.path.join(orders_dir, "orders.json")
+
+        # Load existing records
+        existing = []
+        if os.path.exists(orders_path):
+            try:
+                with open(orders_path, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+                if not isinstance(existing, list):
+                    existing = []
+            except Exception:
+                existing = []
+
+        # Append new records (strip non-serializable fields)
+        for rec in records:
+            entry = {k: v for k, v in rec.items() if k != "_submitted_mono" and not callable(v)}
+            existing.append(entry)
+
+        try:
+            with open(orders_path, "w", encoding="utf-8") as f:
+                json.dump(existing, f, ensure_ascii=False, indent=2, default=str)
+            logger.info(f"💾 订单记录已保存至 runtime/orders.json ({len(records)} 笔)")
+        except Exception as e:
+            logger.warning(f"⚠️ 保存订单记录失败: {e}")
+
     def _connect(self) -> None:
         if not self.ib.isConnected():
             logger.info(f"🔄 正在连接 IBKR TWS/Gateway ({self.host}:{self.port})...")
@@ -85,8 +118,11 @@ class IBKRBroker(BaseBroker):
             if filled_val > 0:
                 return "partial_then_inactive"
             return "inactive_rejected"
+        # Partial fill takes priority over submitted status
         if requested_val > 0 and 0 < filled_val < requested_val:
             return "partial_open"
+        if normalized in {"submitted", "presubmitted", "pendingsubmit"}:
+            return "submitted_pending_rth"
         if requested_val > 0 and filled_val <= 0:
             return "submitted_no_fill"
         return normalized or "unknown"
@@ -160,15 +196,30 @@ class IBKRBroker(BaseBroker):
                 # 1. 定义合约 (SMART 路由)
                 contract = Stock(ticker, 'SMART', 'USD')
                 self.ib.qualifyContracts(contract)
-                
-                # 2. 定义市价单 (Market Order)
-                order = MarketOrder(action, shares)
-                order.eTradeOnly = False
-                order.firmQuoteOnly = False
-                order.outsideRth = bool(ALLOW_OUTSIDE_RTH)
-                order.tif = "DAY"
-                
-                logger.info(f"  -> 📤 发送订单: {action} {shares} 股 {ticker} ...")
+
+                # 2. 选择订单类型：隔夜/盘前/盘后使用限价单，盘中使用市价单
+                limit_price = order_dict.get("price")
+                use_limit = bool(limit_price and limit_price > 0)
+
+                if use_limit:
+                    # 限价单：BUY 时价格上浮 0.5% 确保成交，SELL 时下浮 0.5%
+                    if action == "BUY":
+                        adjusted_price = round(limit_price * 1.005, 2)
+                    else:
+                        adjusted_price = round(limit_price * 0.995, 2)
+                    order = LimitOrder(action, shares, adjusted_price)
+                    order.eTradeOnly = False
+                    order.firmQuoteOnly = False
+                    order.outsideRth = bool(ALLOW_OUTSIDE_RTH)
+                    order.tif = "DAY"
+                    logger.info(f"  -> 📤 发送限价单: {action} {shares} 股 {ticker} @ ${adjusted_price:.2f} (基准价: ${limit_price:.2f})")
+                else:
+                    order = MarketOrder(action, shares)
+                    order.eTradeOnly = False
+                    order.firmQuoteOnly = False
+                    order.outsideRth = bool(ALLOW_OUTSIDE_RTH)
+                    order.tif = "DAY"
+                    logger.info(f"  -> 📤 发送市价单: {action} {shares} 股 {ticker} ...")
                 trade = self.ib.placeOrder(contract, order)
                 submitted_at = utc_now_z()
                 record = {
@@ -204,7 +255,7 @@ class IBKRBroker(BaseBroker):
                 logger.info("🏦 [IBKR 券商端] 订单列表为空（shares 均为 0），无需提交。")
                 return []
 
-            timeout_s = 10.0
+            timeout_s = float(os.getenv("IBKR_ORDER_TIMEOUT_S", "10"))
             logger.info(f"⏳ 正在等待交易所撮合回执 (最大等待 {timeout_s:.0f} 秒)...")
             start = time.time()
             while time.time() - start < timeout_s:
@@ -221,16 +272,25 @@ class IBKRBroker(BaseBroker):
             for trade, rec in trade_records:
                 if trade.orderStatus.status not in terminal_statuses:
                     still_open.append(rec)
-                    rec["timeout_cancel_requested"] = True
-                    try:
-                        self.ib.cancelOrder(trade.order)
-                    except Exception:
-                        pass
+                    # 隔夜/盘前/盘后时段：不取消订单，让 TWS 保留等待成交
+                    if ALLOW_OUTSIDE_RTH:
+                        rec["timeout_cancel_requested"] = False
+                        logger.info(f"  ⏳ [IBKR 盘前/盘后] {rec['ticker']} 订单已提交，等待开盘成交 (outsideRth=True)")
+                    else:
+                        rec["timeout_cancel_requested"] = True
+                        try:
+                            self.ib.cancelOrder(trade.order)
+                        except Exception:
+                            pass
 
             if still_open:
-                logger.warning(f"⚠️ [IBKR 超时] {len(still_open)} 笔订单未在超时内完成，已尝试取消。")
-                emit_event("broker.ibkr", "ERROR", "order_timeout", "orders_not_finished_before_timeout", {"count": len(still_open), "timeout_s": timeout_s})
-                self.ib.sleep(1.0)
+                if ALLOW_OUTSIDE_RTH:
+                    logger.info(f"📋 [IBKR 盘前/盘后] {len(still_open)} 笔订单已提交至 TWS，将在开盘后成交。")
+                    emit_event("broker.ibkr", "INFO", "order_submitted_pending", "orders_submitted_waiting_for_rth", {"count": len(still_open)})
+                else:
+                    logger.warning(f"⚠️ [IBKR 超时] {len(still_open)} 笔订单未在超时内完成，已尝试取消。")
+                    emit_event("broker.ibkr", "ERROR", "order_timeout", "orders_not_finished_before_timeout", {"count": len(still_open), "timeout_s": timeout_s})
+                    self.ib.sleep(1.0)
             
             for trade, rec in trade_records:
                 status = trade.orderStatus.status
@@ -262,11 +322,18 @@ class IBKRBroker(BaseBroker):
                     else:
                         logger.warning(f"  ❌ [IBKR 拒单/取消] {rec['action']} {rec['requested']} 股 {rec['ticker']} (状态: {status})")
                         emit_event("broker.ibkr", "ERROR", "order_rejected", "order_rejected_or_cancelled", {"ticker": rec["ticker"], "action": rec["action"], "requested": rec["requested"], "status": status})
+                elif status in ["Submitted", "PreSubmitted", "PendingSubmit"] and ALLOW_OUTSIDE_RTH:
+                    logger.info(f"  📋 [IBKR 待成交] {rec['action']} {rec['requested']} 股 {rec['ticker']} (状态: {status}) — 已提交至 TWS，等待开盘成交")
                 else:
                     logger.warning(f"  ⚠️ [IBKR 未完成] {rec['action']} {rec['filled']}/{rec['requested']} 股 {rec['ticker']} (状态: {status})")
                     emit_event("broker.ibkr", "ERROR", "order_unfinished", "order_not_in_terminal_state", {"ticker": rec["ticker"], "action": rec["action"], "status": status})
 
-            return [rec for _, rec in trade_records]
+            records = [rec for _, rec in trade_records]
+
+            # 持久化订单状态到文件，方便断连后查询
+            self._persist_order_records(records)
+
+            return records
                     
         except Exception as e:
             logger.error(f"❌ 向 IBKR 提交订单时发生异常: {e}")

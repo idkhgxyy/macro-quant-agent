@@ -13,8 +13,15 @@ class PortfolioManager:
         
         # 1. 计算当前总资产
         portfolio_value = cash
+        missing_prices = []
         for ticker, shares in positions.items():
-            portfolio_value += shares * current_prices[ticker]
+            price = current_prices.get(ticker)
+            if price is None:
+                missing_prices.append(ticker)
+                continue
+            portfolio_value += shares * price
+        if missing_prices:
+            logger.warning(f"⚠️ 以下股票缺少价格数据，已跳过: {missing_prices}")
             
         logger.info(f"💰 当前账户总资产: ${portfolio_value:,.2f} (现金: ${cash:,.2f})")
         
@@ -46,7 +53,10 @@ class PortfolioManager:
             target_amount = portfolio_value * target_weight
             
             current_shares = positions.get(ticker, 0)
-            current_price = current_prices[ticker]
+            current_price = current_prices.get(ticker)
+            if current_price is None:
+                logger.warning(f"  ⚠️ {ticker:<5} 缺少价格数据，跳过调仓。")
+                continue
             current_amount = current_shares * current_price
             current_weight = current_amount / portfolio_value if portfolio_value > 0 else 0
             

@@ -38,7 +38,7 @@ DUST_MAX_WEIGHT = float(os.getenv("DUST_MAX_WEIGHT", "0.01"))
 # 风控参数 (Risk Management) — 均可通过同名环境变量覆盖
 MIN_CASH_RATIO = float(os.getenv("MIN_CASH_RATIO", "0.05"))
 MAX_DAILY_TURNOVER = float(os.getenv("MAX_DAILY_TURNOVER", "0.30"))
-DEADBAND_THRESHOLD = float(os.getenv("DEADBAND_THRESHOLD", "0.05"))
+DEADBAND_THRESHOLD = float(os.getenv("DEADBAND_THRESHOLD", "0.02"))
 MAX_SINGLE_POSITION = float(os.getenv("MAX_SINGLE_POSITION", "0.20"))
 MAX_API_ERRORS = int(os.getenv("MAX_API_ERRORS", "3"))
 

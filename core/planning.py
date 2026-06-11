@@ -107,6 +107,11 @@ class PlanningService:
             log_struct("daily_abort_no_prices", {"date": date_str, "broker": BROKER_TYPE}, level="WARNING")
             return {"success": False, "status": "abort_no_prices"}
 
+        # 检测缺价 ticker，从决策池中排除
+        missing_price_tickers = [t for t in positions if current_prices.get(t) is None]
+        if missing_price_tickers:
+            logger.warning(f"⚠️ 以下 ticker 缺少价格数据，将从决策池中排除: {missing_price_tickers}")
+
         portfolio_value = float(cash)
         for ticker, shares in positions.items():
             portfolio_value += float(shares) * float(current_prices.get(ticker, 0))
@@ -157,6 +162,7 @@ class PlanningService:
             "current_positions_str": current_positions_str,
             "retrieval_route": retrieval_route,
             "retrieval_route_context": retrieval_route_context,
+            "missing_price_tickers": missing_price_tickers,
         }
 
     def generate_plan(

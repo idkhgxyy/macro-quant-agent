@@ -332,7 +332,7 @@ class AgentIntegrationTests(unittest.TestCase):
             with patch("core.agent.get_market_session", side_effect=_open_market_session), patch(
                 "utils.alerting.evaluate_and_notify",
                 return_value={"triggered": False, "items": []},
-            ), patch("core.agent.BROKER_TYPE", "ibkr"), patch("core.agent.ENABLE_LIVE_TRADING", False):
+            ), patch("core.agent.BROKER_TYPE", "ibkr"), patch("core.agent.ENABLE_LIVE_TRADING", False), patch("core.agent.ALLOW_OUTSIDE_RTH", False), patch("core.planning.ALLOW_OUTSIDE_RTH", False):
                 agent.run_daily_routine()
 
             date_str = _latest_date(tmpdir)
@@ -371,7 +371,7 @@ class AgentIntegrationTests(unittest.TestCase):
             with patch("core.agent.get_market_session", side_effect=_open_market_session), patch(
                 "utils.alerting.evaluate_and_notify",
                 return_value={"triggered": False, "items": []},
-            ), patch("core.agent.BROKER_TYPE", "ibkr"), patch("core.agent.ENABLE_LIVE_TRADING", False):
+            ), patch("core.agent.BROKER_TYPE", "ibkr"), patch("core.agent.ENABLE_LIVE_TRADING", False), patch("core.agent.ALLOW_OUTSIDE_RTH", False), patch("core.planning.ALLOW_OUTSIDE_RTH", False):
                 agent.run_daily_routine()
 
             date_str = _latest_date(tmpdir)
@@ -526,7 +526,8 @@ class AgentIntegrationTests(unittest.TestCase):
             self.assertEqual(decision_doc["payload"]["status"], "cancelled")
             self.assertEqual(decision_doc["payload"]["execution_summary"]["status"], "cancelled")
             self.assertEqual(ledger_doc["payload"]["execution_report"][0]["status"], "Cancelled")
-            self.assertTrue(ledger_doc["payload"]["reconciliation"]["ok"])
+            self.assertFalse(ledger_doc["payload"]["reconciliation"]["ok"])
+            self.assertTrue(ledger_doc["payload"]["reconciliation"].get("all_cancelled"))
             self.assertEqual(heartbeat_doc["last_run"]["status"], "cancelled")
             self.assertEqual(metrics_items[-1]["status"], "cancelled")
 
@@ -581,12 +582,12 @@ class AgentIntegrationTests(unittest.TestCase):
             heartbeat_doc = _read_json(os.path.join(tmpdir, "runtime", "heartbeat.json"))
             metrics_items = _read_jsonl(os.path.join(tmpdir, "metrics", "metrics.jsonl"))
 
-            self.assertEqual(decision_doc["payload"]["status"], "unfilled")
-            self.assertEqual(decision_doc["payload"]["execution_summary"]["status"], "unfilled")
+            self.assertEqual(decision_doc["payload"]["status"], "submitted_pending")
+            self.assertEqual(decision_doc["payload"]["execution_summary"]["status"], "submitted_pending")
             self.assertEqual(ledger_doc["payload"]["execution_report"][0]["status"], "Submitted")
             self.assertTrue(ledger_doc["payload"]["reconciliation"]["ok"])
-            self.assertEqual(heartbeat_doc["last_run"]["status"], "unfilled")
-            self.assertEqual(metrics_items[-1]["status"], "unfilled")
+            self.assertEqual(heartbeat_doc["last_run"]["status"], "submitted_pending")
+            self.assertEqual(metrics_items[-1]["status"], "submitted_pending")
 
 
 if __name__ == "__main__":

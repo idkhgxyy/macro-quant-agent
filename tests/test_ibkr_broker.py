@@ -252,9 +252,18 @@ class TestIBKRBrokerSubmitOrders(TestCase):
         self.mock_ib.placeOrder.return_value = trade
         self.mock_ib.sleep.side_effect = None
 
-        with patch("execution.broker.time") as mock_time:
-            mock_time.perf_counter.side_effect = [100.0, 100.01, 100.02, 120.0]
-            mock_time.time.side_effect = [100.0, 120.0]
+        with patch("execution.broker.time") as mock_time, patch("execution.broker.ALLOW_OUTSIDE_RTH", False), \
+             patch.dict("os.environ", {"IBKR_ORDER_TIMEOUT_S": "10"}):
+            # perf_counter: submitted_mono, then elapsed_sec in finalization
+            mock_time.perf_counter.return_value = 100.0
+            # time.time: start=100, then loop iterations until timeout
+            call_count = [0]
+            def time_side_effect():
+                call_count[0] += 1
+                if call_count[0] == 1:
+                    return 100.0  # start
+                return 111.0  # > 100 + 10, triggers timeout
+            mock_time.time.side_effect = time_side_effect
             result = self.broker.submit_orders(self.orders)
 
         self.assertEqual(result[0]["timeout_cancel_requested"], True)
@@ -304,7 +313,7 @@ class TestIBKRBrokerStatusDetail(TestCase):
 
     def test_submitted_no_fill(self):
         result = self.broker._status_detail("Submitted", 0, 200, timeout_cancel_requested=False)
-        self.assertEqual(result, "submitted_no_fill")
+        self.assertEqual(result, "submitted_pending_rth")
 
     def test_unknown_status_falls_to_submitted_no_fill(self):
         result = self.broker._status_detail("MagicStatus", 0, 200, timeout_cancel_requested=False)

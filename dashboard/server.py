@@ -267,6 +267,33 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return
         super().do_GET()
 
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/"):
+            if not is_dashboard_authorized(parsed, self.headers):
+                return self._send_unauthorized()
+            try:
+                self._handle_post_api(parsed)
+            except Exception as e:
+                self._send_error(500, "internal_error", str(e))
+            return
+        self._send_error(404, "not_found", "Unknown API path")
+
+    def _handle_post_api(self, parsed):
+        path = parsed.path
+
+        if path == "/api/kill_switch/clear":
+            ks = KillSwitchStore(
+                lock_path=os.path.join(ROOT, "kill_switch.lock"),
+                state_path=os.path.join(ROOT, "runtime", "kill_switch.json"),
+            )
+            if not ks.is_locked():
+                return self._send_json({"ok": True, "message": "Kill switch was not locked"})
+            result = ks.clear(reason="manual_clear_via_dashboard")
+            return self._send_json({"ok": True, "message": "Kill switch cleared", "state": result})
+
+        return self._send_error(404, "not_found", f"Unknown API path: {path}")
+
     def _handle_api(self, parsed):
         qs = parse_qs(parsed.query or "")
         path = parsed.path
