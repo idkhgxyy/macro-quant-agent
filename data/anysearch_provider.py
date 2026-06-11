@@ -4,7 +4,6 @@ Provides higher-quality financial vertical search compared to generic web search
 Supports finance.us_stock and finance.market sub-domains for structured queries.
 Anonymous access available (lower rate limits); API key optional for higher limits.
 """
-import json
 import os
 from typing import Optional
 

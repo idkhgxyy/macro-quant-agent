@@ -7,7 +7,6 @@ for the caller to persist and log.
 import time
 from typing import Optional
 
-from config import ALLOW_OUTSIDE_RTH
 from execution.broker import BaseBroker
 from execution.reconcile import reconcile_execution
 from utils.logger import setup_logger

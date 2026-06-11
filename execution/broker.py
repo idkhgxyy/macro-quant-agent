@@ -4,7 +4,7 @@ import json
 import os
 import random
 import time
-from datetime import datetime
+from typing import Union
 from ib_insync import IB, Stock, MarketOrder, LimitOrder, Trade
 from utils.logger import setup_logger
 logger = setup_logger(__name__)
@@ -207,7 +207,7 @@ class IBKRBroker(BaseBroker):
                         adjusted_price = round(limit_price * 1.005, 2)
                     else:
                         adjusted_price = round(limit_price * 0.995, 2)
-                    order = LimitOrder(action, shares, adjusted_price)
+                    order: Union[LimitOrder, MarketOrder] = LimitOrder(action, shares, adjusted_price)
                     order.eTradeOnly = False
                     order.firmQuoteOnly = False
                     order.outsideRth = bool(ALLOW_OUTSIDE_RTH)
