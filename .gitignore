@@ -29,6 +29,9 @@ kill_switch.lock
 !docs/assets/readme/*.png
 
 docs/*
+!docs/assets/
+!docs/assets/readme/
+!docs/assets/readme/*.png
 !docs/Interview-Prep.md
 
 reports/daily_report_*.md
