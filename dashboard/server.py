@@ -321,7 +321,7 @@ def _get_rag_texts(date: Optional[str]) -> tuple:
     return (macro, news, filings, actual_date)
 
 
-def _call_llm_summary(macro: str, news: str, filings: str) -> dict:
+def _call_llm_summary(macro: str, news: str, filings: str, lang: str = "zh") -> dict:
     """Call DeepSeek to summarize the day's news/macro/filings into bullet points."""
     from config.secrets import VOLCENGINE_API_KEY, VOLCENGINE_MODEL_ENDPOINT, LLM_BASE_URL, LLM_PROVIDER
     from openai import OpenAI
@@ -344,17 +344,28 @@ def _call_llm_summary(macro: str, news: str, filings: str) -> dict:
 
     raw_text = "\n\n".join(sections)
 
-    system_prompt = (
-        "你是一位专业的金融分析师。你的任务是将当日收集到的宏观经济数据、市场新闻和SEC公告，"
-        "总结为简洁、易读的投资要点。\n\n"
-        "输出格式要求（严格JSON）：\n"
-        '{"summary": "一段话总结当日市场整体情况（50-100字）", '
-        '"highlights": ["要点1", "要点2", "要点3", ...]}\n\n'
-        "要点数量3-6条，每条15-30字，聚焦对投资决策有影响的信息。"
-        "只输出JSON，不要输出其他内容。"
-    )
-
-    user_prompt = f"请总结以下当日市场信息：\n\n{raw_text[:6000]}"
+    if lang == "en":
+        system_prompt = (
+            "You are a professional financial analyst. Your task is to summarize the day's collected "
+            "macroeconomic data, market news, and SEC filings into concise, readable investment highlights.\n\n"
+            "Output format (strict JSON):\n"
+            '{"summary": "A one-paragraph summary of the day\'s overall market situation (50-100 words)", '
+            '"highlights": ["Point 1", "Point 2", "Point 3", ...]}\n\n'
+            "3-6 highlights, each 15-30 words, focusing on information that impacts investment decisions. "
+            "Output JSON only, no other content."
+        )
+        user_prompt = f"Please summarize the following market information for the day:\n\n{raw_text[:6000]}"
+    else:
+        system_prompt = (
+            "你是一位专业的金融分析师。你的任务是将当日收集到的宏观经济数据、市场新闻和SEC公告，"
+            "总结为简洁、易读的投资要点。\n\n"
+            "输出格式要求（严格JSON）：\n"
+            '{"summary": "一段话总结当日市场整体情况（50-100字）", '
+            '"highlights": ["要点1", "要点2", "要点3", ...]}\n\n'
+            "要点数量3-6条，每条15-30字，聚焦对投资决策有影响的信息。"
+            "只输出JSON，不要输出其他内容。"
+        )
+        user_prompt = f"请总结以下当日市场信息：\n\n{raw_text[:6000]}"
 
     try:
         kwargs = {
@@ -388,14 +399,14 @@ def _call_llm_summary(macro: str, news: str, filings: str) -> dict:
         return {"error": str(e), "summary": "", "highlights": []}
 
 
-def _get_news_summary(date: Optional[str]) -> dict:
+def _get_news_summary(date: Optional[str], lang: str = "zh") -> dict:
     """Get news summary for a date, using cache if available, otherwise calling LLM."""
     macro, news, filings, actual_date = _get_rag_texts(date)
     if not actual_date:
         return {"date": None, "summary": "", "highlights": [], "error": "No RAG data found", "cached": False}
 
     # Check cache
-    cache_path = os.path.join(ROOT, "snapshots", f"news_summary_{actual_date}.json")
+    cache_path = os.path.join(ROOT, "snapshots", f"news_summary_{actual_date}_{lang}.json")
     if os.path.exists(cache_path):
         cached = _read_json(cache_path)
         if cached and cached.get("summary"):
@@ -413,7 +424,7 @@ def _get_news_summary(date: Optional[str]) -> dict:
                 cached["date"] = actual_date
                 return cached
 
-        result = _call_llm_summary(macro, news, filings)
+        result = _call_llm_summary(macro, news, filings, lang)
         result["date"] = actual_date
         result["cached"] = False
 
@@ -666,7 +677,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         if path == "/api/news-summary":
             date = (qs.get("date") or [None])[0]
-            return self._send_json(_get_news_summary(date))
+            lang = (qs.get("lang") or ["zh"])[0]
+            return self._send_json(_get_news_summary(date, lang))
 
         return self._send_error(404, "not_found", f"Unknown API path: {path}")
 

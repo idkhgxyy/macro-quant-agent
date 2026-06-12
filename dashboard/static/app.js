@@ -454,7 +454,7 @@ async function refresh() {
     jget("/api/review", replayParams),
     jget("/api/metrics?limit=120"),
     jget("/api/equity?limit=60"),
-    jget("/api/news-summary", replayParams),
+    jget("/api/news-summary", { ...replayParams, lang: currentLang }),
   ]);
 
   const dPayload = decision?.payload || null;
@@ -560,11 +560,11 @@ async function refresh() {
       (highlights.length
         ? `<ul class="news-highlights">${highlights.map((h) => `<li>${escapeHtml(h)}</li>`).join("")}</ul>`
         : "") +
-      (newsSummary.cached ? "" : `<div class="news-summary-fresh">AI Summary</div>`);
+      (newsSummary.cached ? "" : `<div class="news-summary-fresh">${currentLang === "zh" ? "AI 摘要" : "AI Summary"}</div>`);
   } else if (newsSummary && newsSummary.error) {
-    summaryEl.innerHTML = `<div class="news-summary-error">Summary unavailable: ${escapeHtml(newsSummary.error)}</div>`;
+    summaryEl.innerHTML = `<div class="news-summary-error">${currentLang === "zh" ? "摘要不可用" : "Summary unavailable"}: ${escapeHtml(newsSummary.error)}</div>`;
   } else {
-    summaryEl.innerHTML = `<div class="news-summary-text">No summary available.</div>`;
+    summaryEl.innerHTML = `<div class="news-summary-text">${currentLang === "zh" ? "暂无摘要" : "No summary available."}</div>`;
   }
 
   /* ── Orders section ── */

@@ -1,5 +1,7 @@
 # Macro Quant Agent
 
+[简体中文](./README.md) | [English](./README.en.md)
+
 LLM 驱动的宏观/科技股配置系统，基于 Python 构建，具备检索增强上下文、组合风控约束、回测、调度/心跳监控，以及本地 Dashboard 用于审计与回放。
 
 ## 一览
