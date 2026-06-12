@@ -10,7 +10,7 @@ let currentLang = SUPPORTED_LANGS.has(langParam)
 
 /* ── Settings state ── */
 let loadedSettings = {};
-const SECRET_FIELD_IDS = new Set(["set-deepseek-key", "set-alphavantage-key", "set-anysearch-key"]);
+const SECRET_FIELD_IDS = new Set(["set-deepseek-key", "set-fmp-key", "set-alphavantage-key", "set-anysearch-key"]);
 const secretFieldEdited = new Set();
 
 const TOGGLE_FIELDS = [
@@ -381,6 +381,7 @@ function _parseBoolEnv(val) {
 function populateSettingsFields(settings) {
   document.getElementById("set-deepseek-key").value = settings.DEEPSEEK_API_KEY || "";
   document.getElementById("set-deepseek-model").value = settings.DEEPSEEK_MODEL || "";
+  document.getElementById("set-fmp-key").value = settings.FMP_API_KEY || "";
   document.getElementById("set-alphavantage-key").value = settings.ALPHA_VANTAGE_KEY || "";
   document.getElementById("set-anysearch-key").value = settings.ANYSEARCH_API_KEY || "";
   document.getElementById("set-broker-type").value = settings.BROKER_TYPE || "mock";
@@ -397,6 +398,10 @@ async function saveSettings() {
   if (secretFieldEdited.has("set-deepseek-key")) {
     const val = document.getElementById("set-deepseek-key").value.trim();
     if (val) payload.DEEPSEEK_API_KEY = val;
+  }
+  if (secretFieldEdited.has("set-fmp-key")) {
+    const val = document.getElementById("set-fmp-key").value.trim();
+    if (val) payload.FMP_API_KEY = val;
   }
   if (secretFieldEdited.has("set-alphavantage-key")) {
     const val = document.getElementById("set-alphavantage-key").value.trim();

@@ -16,6 +16,7 @@ from config import BROKER_TYPE, HALF_DAY_RTH_END, MARKET_TIMEZONE, RTH_END, RTH_
 from .cache import CacheDB
 from .earnings_agent import EarningsResearchAgent
 from .ibkr_data import IBKRDataProvider
+from .providers.fmp import FMPProvider
 from utils.trading_hours import get_market_session
 from utils.retry import retry_call
 from utils.events import emit_event, classify_exception
@@ -39,6 +40,7 @@ class RAGRetriever:
         self.cache = CacheDB()
         self._av_last_call_ts = 0.0
         self._provider_status: dict = {}
+        self._fmp = FMPProvider()
 
     @staticmethod
     def _dummy_prices() -> dict:
@@ -382,6 +384,10 @@ class RAGRetriever:
     def _provider_budget_config(self, data_kind: str, provider: str):
         tech_count = max(len(TECH_UNIVERSE), 1)
         configs = {
+            ("news", "fmp"): {"window": "daily", "limit": 250, "cost": 1},
+            ("market", "fmp"): {"window": "daily", "limit": 250, "cost": tech_count},
+            ("fundamental", "fmp"): {"window": "daily", "limit": 250, "cost": tech_count},
+            ("macro", "fmp"): {"window": "daily", "limit": 250, "cost": 3},
             ("news", "alphavantage"): {"window": "daily", "limit": 12, "cost": 1},
             ("market", "alphavantage"): {"window": "daily", "limit": 36, "cost": tech_count},
             ("fundamental", "alphavantage"): {"window": "daily", "limit": 27, "cost": tech_count},
@@ -609,18 +615,43 @@ class RAGRetriever:
         }
 
     def _provider_candidates(self, data_kind: str) -> list:
+        fmp_available = self._fmp.is_available()
         if data_kind == "news":
-            return ["alphavantage"]
+            candidates = []
+            if fmp_available:
+                candidates.append("fmp")
+            if _ANYSEARCH_AVAILABLE:
+                candidates.append("anysearch")
+            if _DDGS_AVAILABLE:
+                candidates.append("websearch")
+            candidates.append("alphavantage")
+            return candidates
         if data_kind == "fundamental":
-            return ["alphavantage", "yfinance"]
+            candidates = []
+            if fmp_available:
+                candidates.append("fmp")
+            if self.av_key:
+                candidates.append("alphavantage")
+            candidates.append("yfinance")
+            return candidates
         if data_kind == "market":
             if BROKER_TYPE == "ibkr":
                 return ["ibkr"]
-            return ["alphavantage", "yfinance"]
+            candidates = []
+            if fmp_available:
+                candidates.append("fmp")
+            if self.av_key:
+                candidates.append("alphavantage")
+            candidates.append("yfinance")
+            return candidates
         if data_kind == "macro":
             if BROKER_TYPE == "ibkr":
                 return ["ibkr"]
-            return ["fred", "yfinance"]
+            candidates = []
+            if fmp_available:
+                candidates.append("fmp")
+            candidates.extend(["fred", "yfinance"])
+            return candidates
         if data_kind == "filing":
             return ["sec_edgar"]
         return []
@@ -1010,8 +1041,34 @@ class RAGRetriever:
         self._finish_provider_trace(data_kind, "none", "degraded", "ibkr_unavailable")
         return degraded_result
         
+    def _fetch_news_from_fmp(self) -> str:
+        result = self._fmp.fetch_news()
+        if not result:
+            raise ValueError("fmp_news_empty")
+        return result
+
+    def _fetch_market_from_fmp(self) -> dict:
+        result = self._fmp.fetch_market(list(TECH_UNIVERSE))
+        if not result:
+            raise ValueError("fmp_market_empty")
+        return result
+
+    def _fetch_fundamental_from_fmp(self) -> str:
+        result = self._fmp.fetch_fundamental(list(TECH_UNIVERSE))
+        if not result:
+            raise ValueError("fmp_fundamental_empty")
+        return result
+
+    def _fetch_macro_from_fmp(self) -> str:
+        result = self._fmp.fetch_macro()
+        if not result:
+            raise ValueError("fmp_macro_empty")
+        return result
+
     def fetch_news(self) -> str:
         providers = []
+        if self._fmp.is_available():
+            providers.append(("fmp", self._fetch_news_from_fmp))
         if _ANYSEARCH_AVAILABLE:
             providers.append(("anysearch", self._fetch_news_via_anysearch))
         if _DDGS_AVAILABLE:
@@ -1034,12 +1091,15 @@ class RAGRetriever:
                 degraded_result={"context_string": "市场数据获取失败，无法提供涨跌幅数据。", "prices": self._dummy_prices()},
                 log_prefix="📊",
             )
-        av_providers = []
+        providers = []
+        if self._fmp.is_available():
+            providers.append(("fmp", self._fetch_market_from_fmp))
         if self.av_key:
-            av_providers.append(("alphavantage", self._fetch_market_data_from_alpha_vantage))
+            providers.append(("alphavantage", self._fetch_market_data_from_alpha_vantage))
+        providers.append(("yfinance", self._fetch_market_via_yfinance))
         return self._fetch_with_providers(
             "market", "market_data",
-            providers=av_providers + [("yfinance", self._fetch_market_via_yfinance)],
+            providers=providers,
             cadence="daily",
             ttl_fn=self._cache_ttl_for_market,
             degraded_result={"context_string": "市场数据获取失败，无法提供涨跌幅数据。", "prices": self._dummy_prices()},
@@ -1056,6 +1116,8 @@ class RAGRetriever:
                 log_prefix="🌍",
             )
         providers = []
+        if self._fmp.is_available():
+            providers.append(("fmp", self._fetch_macro_from_fmp))
         if _ANYSEARCH_AVAILABLE:
             providers.append(("anysearch", self._fetch_macro_via_anysearch))
         providers.extend([("fred", self._fetch_macro_data_from_fred), ("yfinance", self._fetch_macro_via_yfinance)])
@@ -1068,12 +1130,15 @@ class RAGRetriever:
         )
 
     def fetch_fundamental_data(self) -> str:
-        av_providers = []
+        providers = []
+        if self._fmp.is_available():
+            providers.append(("fmp", self._fetch_fundamental_from_fmp))
         if self.av_key:
-            av_providers.append(("alphavantage", self._fetch_fundamental_data_from_alpha_vantage))
+            providers.append(("alphavantage", self._fetch_fundamental_data_from_alpha_vantage))
+        providers.append(("yfinance", self._fetch_fundamental_via_yfinance))
         return self._fetch_with_providers(
             "fundamental", "fundamental_data_v2",
-            providers=av_providers + [("yfinance", self._fetch_fundamental_via_yfinance)],
+            providers=providers,
             cadence="weekly",
             ttl_fn=self._cache_ttl_for_fundamental,
             degraded_result="基本面数据获取失败，假设各公司估值处于行业平均水平。",

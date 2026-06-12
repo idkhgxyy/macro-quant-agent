@@ -27,7 +27,7 @@ Displays LLM audit trails, execution details, reconciliation, provider health, a
 
 ### Core Interactions
 
-- Configure API Keys (DeepSeek / Alpha Vantage / AnySearch) via the sidebar — no manual `.env` editing needed
+- Configure API Keys (DeepSeek / FMP / Alpha Vantage / AnySearch) via the sidebar — no manual `.env` editing needed
 - News cards auto-invoke the LLM to generate daily summaries, with raw data expandable for review
 - Click the `Monitor` link in the top bar to switch to the developer monitoring page
 
@@ -91,7 +91,7 @@ The project includes a lightweight ops console:
 
 ### 6. Frontend Configuration
 
-- Fill in API Keys (DeepSeek / Alpha Vantage / AnySearch) directly in the sidebar — saved to `.env` with no manual file editing
+- Fill in API Keys (DeepSeek / FMP / Alpha Vantage / AnySearch) directly in the sidebar — saved to `.env` with no manual file editing
 - News cards auto-invoke the LLM to generate daily summaries (cached to `snapshots/news_summary_*.json`), with raw data expandable for review
 - Both pages share the same backend, with data synced in real time
 
@@ -276,7 +276,7 @@ flowchart TD
 - Python 3.9+
 - `pandas`, `numpy`, `matplotlib`
 - `openai` SDK, compatible with DeepSeek and Volcengine OpenAI-compatible endpoints
-- `yfinance`, `Alpha Vantage`
+- `yfinance`, `Alpha Vantage`, `FMP (Financial Modeling Prep)`
 - SEC EDGAR official filing metadata (8-K, 10-Q, 10-K)
 - `ib_insync` for IBKR integration
 - `FRED` macroeconomic indicators
@@ -300,7 +300,8 @@ python3 dashboard/server.py
 Open `http://127.0.0.1:8010`, click the menu button in the top-left corner, and fill in:
 
 - **DeepSeek API Key** (required, for LLM strategy generation and news summaries)
-- **Alpha Vantage Key** (optional, improves fundamental data quality)
+- **FMP API Key** (recommended, primary US market data source, free 250 calls/day, covers quotes + fundamentals + news + macro)
+- **Alpha Vantage Key** (optional, backup data source)
 - **AnySearch Key** (optional, enhances news retrieval)
 
 Click Save to write them to `.env` — no manual file editing needed.
@@ -435,7 +436,7 @@ The core pipeline (RAG → LLM plan → portfolio risk control → broker execut
 | Area | Summary |
 |---|---|
 | Architecture | 283-line monolithic `run_daily_routine()` decomposed into 4 injectable Service classes (Planning, Execution, Persistence, Ops) |
-| Data Layer | Generic `_fetch_with_providers()` engine, WebSearch news source replacing Alpha Vantage |
+| Data Layer | Generic `_fetch_with_providers()` engine, FMP primary + Alpha Vantage / yfinance fallback |
 | Type Safety | Key planning, execution, and validation modules are mypy clean |
 | Persistence | SQLite via `data/store.py`, JSON/JSONL retained for Dashboard reads |
 | Attribution | `portfolio_attribution` field and highlight extraction |

@@ -5,6 +5,7 @@ import os
 logger = logging.getLogger(__name__)
 
 ALPHA_VANTAGE_KEY = os.getenv("ALPHA_VANTAGE_KEY")
+FMP_API_KEY = os.getenv("FMP_API_KEY")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL")
 
