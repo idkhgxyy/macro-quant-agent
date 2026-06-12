@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Isolation Monitor</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="monitor-page">
+    <header class="monitor-header">
+      <div class="monitor-header-left">
+        <a href="/" class="back-link">&larr; Dashboard</a>
+        <h1 class="monitor-title">Monitor</h1>
+      </div>
+      <div class="monitor-header-right">
+        <select id="select-date" class="sb-select">
+          <option value="">Latest</option>
+        </select>
+        <button class="sb-btn small" id="btn-refresh">Refresh</button>
+      </div>
+    </header>
+
+    <div class="monitor-grid">
+      <!-- LLM Audit -->
+      <section class="monitor-card">
+        <div class="monitor-card-title">LLM Audit Trail</div>
+        <pre class="mono compact" id="text-llm-audit">—</pre>
+      </section>
+
+      <!-- Self Evaluation -->
+      <section class="monitor-card">
+        <div class="monitor-card-title">Self Evaluation</div>
+        <div class="eval-row" id="list-self-eval"></div>
+      </section>
+
+      <!-- Execution Details -->
+      <section class="monitor-card">
+        <div class="monitor-card-title">Execution Report</div>
+        <div class="table-wrap compact" id="table-exec"></div>
+      </section>
+
+      <!-- Reconciliation -->
+      <section class="monitor-card">
+        <div class="monitor-card-title">Reconciliation</div>
+        <pre class="mono compact" id="text-reconcile">—</pre>
+      </section>
+
+      <!-- Execution Quality -->
+      <section class="monitor-card">
+        <div class="monitor-card-title">Execution Quality</div>
+        <div id="list-execution-quality"></div>
+      </section>
+
+      <!-- Execution Lifecycle -->
+      <section class="monitor-card">
+        <div class="monitor-card-title">Execution Lifecycle</div>
+        <div id="list-exec-lifecycle"></div>
+      </section>
+
+      <!-- Review: LLM Summary -->
+      <section class="monitor-card">
+        <div class="monitor-card-title">LLM Review</div>
+        <div class="review-llm" id="list-review-llm-summary"></div>
+      </section>
+
+      <!-- Evidence Weights -->
+      <section class="monitor-card">
+        <div class="monitor-card-title">Evidence Weights</div>
+        <div id="list-review-evidence-weights"></div>
+      </section>
+
+      <!-- Retrieval Route -->
+      <section class="monitor-card">
+        <div class="monitor-card-title">Retrieval Route</div>
+        <div id="list-review-retrieval-route"></div>
+      </section>
+
+      <!-- Provider Health -->
+      <section class="monitor-card">
+        <div class="monitor-card-title">Provider Health</div>
+        <div id="list-provider-health"></div>
+      </section>
+
+      <!-- Alerts -->
+      <section class="monitor-card">
+        <div class="monitor-card-title">Alerts</div>
+        <div class="alert-list" id="list-alerts"></div>
+      </section>
+
+      <!-- Heartbeat / Runtime -->
+      <section class="monitor-card">
+        <div class="monitor-card-title">Runtime State</div>
+        <pre class="mono compact" id="text-heartbeat">—</pre>
+      </section>
+
+      <!-- Compare -->
+      <section class="monitor-card" style="grid-column: 1 / -1">
+        <div class="monitor-card-title">Multi-Day Compare</div>
+        <div class="monitor-compare-controls">
+          <select id="select-compare-date" class="sb-select">
+            <option value="">Off</option>
+          </select>
+          <button class="sb-btn small" id="btn-compare-clear">Clear</button>
+        </div>
+        <pre class="mono compact" id="text-compare-summary">—</pre>
+        <div id="list-compare-strategies"></div>
+        <div class="ae-label">Position Delta</div>
+        <div class="table-wrap compact" id="table-compare-positions"></div>
+      </section>
+    </div>
+
+    <script src="/monitor.js"></script>
+  </body>
+</html>

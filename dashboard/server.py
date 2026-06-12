@@ -2,6 +2,7 @@
 import json
 import os
 import sys
+import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime
@@ -220,6 +221,227 @@ def _build_review_response(
     return review
 
 
+SETTINGS_KEYS = [
+    "DEEPSEEK_API_KEY",
+    "DEEPSEEK_MODEL",
+    "ALPHA_VANTAGE_KEY",
+    "ANYSEARCH_API_KEY",
+    "BROKER_TYPE",
+    "ENABLE_LIVE_TRADING",
+    "ENFORCE_RTH",
+    "ALLOW_OUTSIDE_RTH",
+]
+
+SECRET_KEYS = {"DEEPSEEK_API_KEY", "ALPHA_VANTAGE_KEY", "ANYSEARCH_API_KEY"}
+
+
+def _mask_secret(value: str) -> str:
+    """Mask API key values: show first 6 + **** + last 4 if len > 10, else '已配置' if non-empty, else ''."""
+    if not value:
+        return ""
+    if len(value) > 10:
+        return value[:6] + "****" + value[-4:]
+    return "已配置"
+
+
+def _read_env_file(path: str) -> dict:
+    """Read .env file and return a dict of key->value, skipping comments and empty lines."""
+    data = {}
+    if not os.path.exists(path):
+        return data
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if "=" in stripped:
+                key, _, val = stripped.partition("=")
+                data[key.strip()] = val.strip()
+    return data
+
+
+def _write_env_file(path: str, data: dict):
+    """Write dict back to .env, preserving comments and order of existing lines, appending new keys at the end."""
+    existing_lines = []
+    updated_keys = set()
+
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            existing_lines = f.readlines()
+
+    new_lines = []
+    for line in existing_lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            new_lines.append(line)
+            continue
+        if "=" in stripped:
+            key, _, _ = stripped.partition("=")
+            key = key.strip()
+            if key in data:
+                new_lines.append(f"{key}={data[key]}\n")
+                updated_keys.add(key)
+            else:
+                new_lines.append(line)
+        else:
+            new_lines.append(line)
+
+    for key in data:
+        if key not in updated_keys:
+            new_lines.append(f"{key}={data[key]}\n")
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)
+
+
+# ── News Summary (LLM-powered) ──
+
+_news_summary_lock = threading.Lock()
+
+
+def _get_rag_texts(date: Optional[str]) -> tuple:
+    """Extract macro, news, filings text from RAG snapshot. Returns (macro, news, filings, actual_date)."""
+    snapshots = os.path.join(ROOT, "snapshots")
+    if date:
+        p = os.path.join(snapshots, f"rag_{date}.json")
+    else:
+        p = _latest_file(snapshots, "rag_")
+    if not p or not os.path.exists(p):
+        return ("", "", "", None)
+    doc = _read_json(p)
+    payload = doc.get("payload") or doc
+    actual_date = doc.get("date") or (os.path.basename(p).replace("rag_", "").replace(".json", "") if p else None)
+    macro = payload.get("macro", "") or ""
+    news = payload.get("news", "") or ""
+    filings_raw = payload.get("filings", "") or ""
+    if isinstance(filings_raw, dict):
+        filings = filings_raw.get("context_string", json.dumps(filings_raw, ensure_ascii=False))
+    else:
+        filings = str(filings_raw)
+    return (macro, news, filings, actual_date)
+
+
+def _call_llm_summary(macro: str, news: str, filings: str) -> dict:
+    """Call DeepSeek to summarize the day's news/macro/filings into bullet points."""
+    from config.secrets import VOLCENGINE_API_KEY, VOLCENGINE_MODEL_ENDPOINT, LLM_BASE_URL, LLM_PROVIDER
+    from openai import OpenAI
+
+    if not VOLCENGINE_API_KEY or not VOLCENGINE_MODEL_ENDPOINT:
+        return {"error": "LLM API key not configured", "summary": "", "highlights": []}
+
+    client = OpenAI(api_key=VOLCENGINE_API_KEY, base_url=LLM_BASE_URL)
+
+    sections = []
+    if macro.strip():
+        sections.append(f"【宏观经济】\n{macro.strip()}")
+    if news.strip():
+        sections.append(f"【市场新闻】\n{news.strip()}")
+    if filings.strip():
+        sections.append(f"【SEC公告】\n{filings.strip()}")
+
+    if not sections:
+        return {"error": "", "summary": "当日无新闻数据。", "highlights": []}
+
+    raw_text = "\n\n".join(sections)
+
+    system_prompt = (
+        "你是一位专业的金融分析师。你的任务是将当日收集到的宏观经济数据、市场新闻和SEC公告，"
+        "总结为简洁、易读的投资要点。\n\n"
+        "输出格式要求（严格JSON）：\n"
+        '{"summary": "一段话总结当日市场整体情况（50-100字）", '
+        '"highlights": ["要点1", "要点2", "要点3", ...]}\n\n'
+        "要点数量3-6条，每条15-30字，聚焦对投资决策有影响的信息。"
+        "只输出JSON，不要输出其他内容。"
+    )
+
+    user_prompt = f"请总结以下当日市场信息：\n\n{raw_text[:6000]}"
+
+    try:
+        kwargs = {
+            "model": VOLCENGINE_MODEL_ENDPOINT,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.3,
+        }
+        if LLM_PROVIDER == "deepseek":
+            kwargs["extra_body"] = {"thinking": {"type": "disabled"}, "stream": False}
+
+        resp = client.chat.completions.create(**kwargs)
+        content = resp.choices[0].message.content.strip()
+
+        # Try to parse JSON from the response
+        # Handle potential markdown code blocks
+        if content.startswith("```"):
+            lines = content.split("\n")
+            content = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+
+        result = json.loads(content)
+        if not isinstance(result, dict):
+            result = {"summary": str(result), "highlights": []}
+        result.setdefault("summary", "")
+        result.setdefault("highlights", [])
+        result["error"] = ""
+        return result
+    except Exception as e:
+        return {"error": str(e), "summary": "", "highlights": []}
+
+
+def _get_news_summary(date: Optional[str]) -> dict:
+    """Get news summary for a date, using cache if available, otherwise calling LLM."""
+    macro, news, filings, actual_date = _get_rag_texts(date)
+    if not actual_date:
+        return {"date": None, "summary": "", "highlights": [], "error": "No RAG data found", "cached": False}
+
+    # Check cache
+    cache_path = os.path.join(ROOT, "snapshots", f"news_summary_{actual_date}.json")
+    if os.path.exists(cache_path):
+        cached = _read_json(cache_path)
+        if cached and cached.get("summary"):
+            cached["cached"] = True
+            cached["date"] = actual_date
+            return cached
+
+    # Call LLM
+    with _news_summary_lock:
+        # Double-check cache after acquiring lock
+        if os.path.exists(cache_path):
+            cached = _read_json(cache_path)
+            if cached and cached.get("summary"):
+                cached["cached"] = True
+                cached["date"] = actual_date
+                return cached
+
+        result = _call_llm_summary(macro, news, filings)
+        result["date"] = actual_date
+        result["cached"] = False
+
+        # Save cache
+        if result.get("summary") and not result.get("error"):
+            try:
+                with open(cache_path, "w", encoding="utf-8") as f:
+                    json.dump(result, f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+
+        return result
+
+
+def _build_settings_response() -> dict:
+    """Read .env and return a masked settings dict for all SETTINGS_KEYS."""
+    env_path = os.path.join(ROOT, ".env")
+    env_data = _read_env_file(env_path)
+    result = {}
+    for key in SETTINGS_KEYS:
+        raw = env_data.get(key, "")
+        if key in SECRET_KEYS:
+            result[key] = _mask_secret(raw)
+        else:
+            result[key] = raw
+    return result
+
+
 class DashboardHandler(SimpleHTTPRequestHandler):
     def translate_path(self, path: str) -> str:
         parsed = urlparse(path)
@@ -228,6 +450,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return os.path.join(STATIC_DIR, "index.html")
         if p == "/" or p == "":
             return os.path.join(STATIC_DIR, "index.html")
+        if p == "/monitor":
+            return os.path.join(STATIC_DIR, "monitor.html")
         return os.path.join(STATIC_DIR, p.lstrip("/"))
 
     def _send_json(self, obj, code: int = 200):
@@ -281,6 +505,47 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     def _handle_post_api(self, parsed):
         path = parsed.path
+
+        if path == "/api/settings":
+            body = self.rfile.read(int(self.headers.get('Content-Length', 0)))
+            try:
+                payload = json.loads(body)
+            except Exception:
+                return self._send_error(400, "invalid_json", "Request body must be valid JSON")
+            if not isinstance(payload, dict):
+                return self._send_error(400, "invalid_json", "Request body must be a JSON object")
+
+            env_path = os.path.join(ROOT, ".env")
+            env_data = _read_env_file(env_path)
+
+            to_write = {}
+            for key in SETTINGS_KEYS:
+                if key not in payload:
+                    continue
+                value = str(payload[key]).strip() if payload[key] is not None else ""
+                if value:
+                    to_write[key] = value
+                elif key in env_data:
+                    # Remove the key by writing empty — _write_env_file will skip it
+                    pass
+
+            # For keys with empty values, remove them from env_data before writing
+            # so _write_env_file drops those lines
+            keys_to_remove = set()
+            for key in SETTINGS_KEYS:
+                if key in payload:
+                    value = str(payload[key]).strip() if payload[key] is not None else ""
+                    if not value and key in env_data:
+                        keys_to_remove.add(key)
+            for key in keys_to_remove:
+                del env_data[key]
+
+            # Merge: existing env_data (minus removed keys) + to_write
+            merged = dict(env_data)
+            merged.update(to_write)
+            _write_env_file(env_path, merged)
+
+            return self._send_json(_build_settings_response())
 
         if path == "/api/kill_switch/clear":
             ks = KillSwitchStore(
@@ -395,6 +660,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if path == "/api/equity":
             n = int((qs.get("limit") or ["60"])[0])
             return self._send_json({"items": _compute_equity_series(n)})
+
+        if path == "/api/settings":
+            return self._send_json(_build_settings_response())
+
+        if path == "/api/news-summary":
+            date = (qs.get("date") or [None])[0]
+            return self._send_json(_get_news_summary(date))
 
         return self._send_error(404, "not_found", f"Unknown API path: {path}")
 

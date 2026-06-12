@@ -3,272 +3,216 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Isolation 控制台</title>
+    <title>Isolation</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <div class="bg">
-      <div class="grain"></div>
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sb-header">
+        <div class="sb-brand">
+          <div class="sb-mark">I</div>
+          <span class="sb-name">Isolation</span>
+        </div>
+        <button class="sb-close" id="btn-sidebar-close" title="Close">&times;</button>
+      </div>
+
+      <div class="sb-section">
+        <div class="sb-section-title">API Keys</div>
+        <div class="sb-field">
+          <label for="set-deepseek-key">DeepSeek API Key</label>
+          <input type="password" id="set-deepseek-key" placeholder="sk-..." autocomplete="off" />
+        </div>
+        <div class="sb-field">
+          <label for="set-deepseek-model">DeepSeek Model</label>
+          <input type="text" id="set-deepseek-model" placeholder="deepseek-chat" />
+        </div>
+        <div class="sb-field">
+          <label for="set-alphavantage-key">Alpha Vantage Key</label>
+          <input type="password" id="set-alphavantage-key" placeholder="Alpha Vantage API Key" autocomplete="off" />
+        </div>
+        <div class="sb-field">
+          <label for="set-anysearch-key">AnySearch Key</label>
+          <input type="password" id="set-anysearch-key" placeholder="AnySearch API Key (optional)" autocomplete="off" />
+        </div>
+      </div>
+
+      <div class="sb-section">
+        <div class="sb-section-title">Broker</div>
+        <div class="sb-field">
+          <label for="set-broker-type">Broker Type</label>
+          <select id="set-broker-type">
+            <option value="mock">Mock (模拟)</option>
+            <option value="ibkr">IBKR (盈透)</option>
+          </select>
+        </div>
+        <div class="sb-field sb-toggle-field">
+          <label for="set-live-trading">Live Trading</label>
+          <div class="toggle-wrap">
+            <input type="checkbox" id="set-live-trading" />
+            <span class="toggle-label" id="lbl-live-trading">OFF</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="sb-section">
+        <div class="sb-section-title">Market Hours</div>
+        <div class="sb-field sb-toggle-field">
+          <label for="set-enforce-rth">Enforce RTH</label>
+          <div class="toggle-wrap">
+            <input type="checkbox" id="set-enforce-rth" />
+            <span class="toggle-label" id="lbl-enforce-rth">OFF</span>
+          </div>
+        </div>
+        <div class="sb-field sb-toggle-field">
+          <label for="set-allow-outside-rth">Allow Outside RTH</label>
+          <div class="toggle-wrap">
+            <input type="checkbox" id="set-allow-outside-rth" />
+            <span class="toggle-label" id="lbl-allow-outside-rth">OFF</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="sb-actions">
+        <button class="sb-btn primary" id="btn-save-settings">Save</button>
+        <div class="sb-save-msg" id="save-msg"></div>
+      </div>
+
+      <div class="sb-footer">
+        <div class="sb-foot-row">
+          <span class="sb-foot-label">Date</span>
+          <select class="sb-select" id="select-date">
+            <option value="">Latest</option>
+          </select>
+        </div>
+        <div class="sb-foot-btns">
+          <button class="sb-btn small" id="btn-date-latest">Latest</button>
+          <button class="sb-btn small" id="btn-refresh">Refresh</button>
+        </div>
+      </div>
+    </aside>
+
+    <div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+    <!-- Main -->
+    <div class="main" id="main">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button class="menu-btn" id="btn-sidebar-open">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </button>
+          <h1 class="brand">
+            <span class="brand-serif">Isolation</span>
+          </h1>
+        </div>
+        <div class="topbar-right">
+          <div class="pill" id="pill-status">—</div>
+          <div class="pill ghost" id="pill-date">—</div>
+          <a class="monitor-link" href="/monitor" id="link-monitor">Monitor</a>
+          <button class="lang-btn" id="btn-lang-toggle">EN</button>
+        </div>
+      </header>
+
+      <div class="content">
+        <!-- Hero: Equity + KPIs -->
+        <section class="card hero">
+          <div class="hero-top">
+            <div class="hero-left">
+              <div class="hero-label">Total Equity</div>
+              <div class="hero-value" id="kpi-equity">—</div>
+              <div class="hero-sub" id="hero-date-sub"></div>
+            </div>
+            <div class="hero-kpis">
+              <div class="kpi"><div class="kpi-label">Cash</div><div class="kpi-value" id="kpi-cash">—</div></div>
+              <div class="kpi"><div class="kpi-label">Positions</div><div class="kpi-value" id="kpi-pos">—</div></div>
+              <div class="kpi"><div class="kpi-label">Turnover</div><div class="kpi-value" id="kpi-turnover">—</div></div>
+            </div>
+          </div>
+          <div class="chart-area" id="chart-equity"></div>
+        </section>
+
+        <!-- Row: Positions + Strategy -->
+        <div class="row-2col">
+          <section class="card">
+            <div class="card-head">
+              <h2 class="card-title">Positions</h2>
+            </div>
+            <div class="card-body">
+              <div class="table-wrap" id="table-positions"></div>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-head">
+              <h2 class="card-title">Strategy</h2>
+            </div>
+            <div class="card-body">
+              <div class="strategy-chips" id="chips-strategies"></div>
+              <div class="reasoning-box" id="text-reasoning">—</div>
+              <div class="alloc-row">
+                <div class="ae-label">Target Weights</div>
+                <div class="table-wrap compact" id="table-allocations"></div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <!-- Row: News + Orders -->
+        <div class="row-2col">
+          <section class="card">
+            <div class="card-head">
+              <h2 class="card-title">News &amp; Macro</h2>
+            </div>
+            <div class="card-body">
+              <div class="news-summary" id="news-summary">
+                <div class="news-summary-loading">Loading summary...</div>
+              </div>
+              <details class="expandable">
+                <summary>Raw Data</summary>
+                <div class="expand-content">
+                  <div class="news-section">
+                    <div class="news-label">Macro</div>
+                    <div class="news-text" id="text-macro">—</div>
+                  </div>
+                  <div class="news-section">
+                    <div class="news-label">News</div>
+                    <div class="news-text" id="text-news">—</div>
+                  </div>
+                  <div class="news-section">
+                    <div class="news-label">SEC Filings</div>
+                    <div class="news-text" id="text-filings">—</div>
+                  </div>
+                </div>
+              </details>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-head">
+              <h2 class="card-title">Orders</h2>
+            </div>
+            <div class="card-body">
+              <div class="table-wrap" id="table-orders"></div>
+              <div class="order-summary" id="list-exec-summary"></div>
+            </div>
+          </section>
+        </div>
+
+        <!-- Review -->
+        <section class="card">
+          <div class="card-head">
+            <h2 class="card-title">Daily Review</h2>
+          </div>
+          <div class="card-body">
+            <div class="review-highlights" id="list-review-highlights"></div>
+            <div class="review-auto-brief" id="list-review-auto-brief"></div>
+          </div>
+        </section>
+      </div>
     </div>
-
-    <header class="topbar">
-      <div class="brand">
-        <div class="mark">I</div>
-        <div class="title">
-          <div class="name">Isolation</div>
-          <div class="sub" data-i18n="brand.sub">LLM 量化运行控制台</div>
-        </div>
-      </div>
-      <div class="meta" id="meta">
-        <div class="pill" id="pill-status">status</div>
-        <div class="pill ghost" id="pill-runtime">runtime</div>
-        <div class="pill ghost" id="pill-broker">broker</div>
-        <div class="pill ghost" id="pill-date">date</div>
-      </div>
-    </header>
-
-    <main class="wrap">
-      <section class="grid">
-        <div class="card hero">
-          <div class="card-hd">
-            <div class="card-title" data-i18n="hero.title">权益曲线</div>
-            <div class="card-note" data-i18n="hero.note">现金 + 持仓市值（按当日 RAG 市价估算）</div>
-          </div>
-          <div class="chart" id="chart-equity"></div>
-          <div class="kpi-row">
-            <div class="kpi">
-              <div class="k" data-i18n="hero.kpi.equity">最新权益</div>
-              <div class="v" id="kpi-equity">—</div>
-            </div>
-            <div class="kpi">
-              <div class="k" data-i18n="hero.kpi.cash">现金</div>
-              <div class="v" id="kpi-cash">—</div>
-            </div>
-            <div class="kpi">
-              <div class="k" data-i18n="hero.kpi.positions">持仓市值</div>
-              <div class="v" id="kpi-pos">—</div>
-            </div>
-            <div class="kpi">
-              <div class="k" data-i18n="hero.kpi.turnover">换手率</div>
-              <div class="v" id="kpi-turnover">—</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-hd">
-            <div class="card-title" data-i18n="runtime.title">运行态</div>
-            <div class="card-note" data-i18n="runtime.note">心跳 / 调度器 / 熔断锁</div>
-          </div>
-          <div class="strategy">
-            <div class="block">
-              <div class="label" data-i18n="runtime.summary">运行摘要</div>
-              <div class="list" id="list-runtime-highlights"></div>
-            </div>
-            <div class="block">
-              <div class="label" data-i18n="runtime.providers">数据源健康</div>
-              <div class="list" id="list-provider-health"></div>
-            </div>
-            <div class="block">
-              <div class="label" data-i18n="runtime.stateFile">状态文件</div>
-              <pre class="mono" id="text-heartbeat">—</pre>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-hd">
-            <div class="card-title" data-i18n="positions.title">组合持仓</div>
-            <div class="card-note" data-i18n="positions.note">最新持仓（shares / value / weight）</div>
-          </div>
-          <div class="table" id="table-positions"></div>
-        </div>
-
-        <div class="card">
-          <div class="card-hd">
-            <div class="card-title" data-i18n="strategy.title">策略</div>
-            <div class="card-note" data-i18n="strategy.note">LLM 推理 / 配置权重 / 证据</div>
-          </div>
-          <div class="strategy">
-            <div class="block">
-              <div class="label" data-i18n="strategy.selected">已选策略</div>
-              <div class="chips" id="chips-strategies"></div>
-            </div>
-            <div class="block">
-              <div class="label" data-i18n="strategy.reasoning">推理说明</div>
-              <pre class="mono" id="text-reasoning">—</pre>
-            </div>
-            <div class="block">
-              <div class="label" data-i18n="strategy.audit">LLM 审计轨迹</div>
-              <pre class="mono audit" id="text-llm-audit">—</pre>
-            </div>
-            <div class="block split">
-              <div>
-                <div class="label" data-i18n="strategy.allocations">目标权重</div>
-                <div class="table" id="table-allocations"></div>
-              </div>
-              <div>
-                <div class="label" data-i18n="strategy.evidence">证据</div>
-                <div class="list" id="list-evidence"></div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-hd">
-            <div class="card-title" data-i18n="execution.title">执行</div>
-            <div class="card-note" data-i18n="execution.note">订单 / 执行回报 / 对账</div>
-          </div>
-          <div class="exec">
-            <div class="block">
-              <div class="label" data-i18n="execution.orders">订单计划</div>
-              <div class="table" id="table-orders"></div>
-            </div>
-            <div class="block">
-              <div class="label" data-i18n="execution.lifecycle">生命周期摘要</div>
-              <div class="list" id="list-exec-lifecycle"></div>
-            </div>
-            <div class="block">
-              <div class="label" data-i18n="execution.lifecycleDetails">生命周期明细</div>
-              <div class="list" id="list-exec-lifecycle-details"></div>
-            </div>
-            <div class="block">
-              <div class="label" data-i18n="execution.report">执行回报</div>
-              <div class="table" id="table-exec"></div>
-            </div>
-            <div class="block">
-              <div class="label" data-i18n="execution.reconcile">对账结果</div>
-              <pre class="mono" id="text-reconcile">—</pre>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-hd">
-            <div class="card-title" data-i18n="review.title">复盘</div>
-            <div class="card-note" data-i18n="review.note">日报归因预览 / 执行质量 / 仓位变化</div>
-          </div>
-          <div class="strategy">
-            <div class="block">
-              <div class="label" data-i18n="review.highlights">复盘摘要</div>
-              <div class="list" id="list-review-highlights"></div>
-            </div>
-            <div class="block">
-              <div class="label" data-i18n="review.autoBrief">自动简报</div>
-              <div class="list" id="list-review-auto-brief"></div>
-            </div>
-            <div class="block">
-              <div class="label" data-i18n="review.llm">LLM 复盘</div>
-              <div class="list" id="list-review-llm-summary"></div>
-            </div>
-            <div class="block split">
-              <div>
-                <div class="label" data-i18n="review.evidenceWeights">证据权重</div>
-                <div class="list" id="list-review-evidence-weights"></div>
-              </div>
-              <div>
-                <div class="label" data-i18n="review.retrievalRoute">检索路由</div>
-                <div class="list" id="list-review-retrieval-route"></div>
-              </div>
-            </div>
-            <div class="block">
-              <div class="label" data-i18n="review.selfEval">模型自评</div>
-              <div class="list" id="list-review-self-eval"></div>
-            </div>
-            <div class="block">
-              <div class="label" data-i18n="review.wouldSubmit">拟提交订单预览</div>
-              <div class="list" id="list-review-would-submit"></div>
-            </div>
-            <div class="block">
-              <div class="label" data-i18n="review.executionQuality">执行质量</div>
-              <div class="list" id="list-execution-quality"></div>
-            </div>
-            <div class="block split">
-              <div>
-                <div class="label" data-i18n="review.summaryPreview">归因预览</div>
-                <pre class="mono" id="text-review-summary">—</pre>
-              </div>
-              <div>
-                <div class="label" data-i18n="review.positionChanges">仓位变化</div>
-                <div class="table" id="table-review-changes"></div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-hd">
-            <div class="card-title" data-i18n="compare.title">多日对比</div>
-            <div class="card-note" data-i18n="compare.note">对比当前回放日期与另一历史日期的状态、策略和持仓变化</div>
-          </div>
-          <div class="strategy">
-            <div class="block">
-              <div class="label" data-i18n="compare.summary">对比摘要</div>
-              <pre class="mono" id="text-compare-summary">—</pre>
-            </div>
-            <div class="block">
-              <div class="label" data-i18n="compare.strategyDiff">策略差异</div>
-              <div class="list" id="list-compare-strategies"></div>
-            </div>
-            <div class="block split">
-              <div>
-                <div class="label" data-i18n="compare.cognitiveDiff">认知差异</div>
-                <div class="list" id="list-compare-cognitive"></div>
-              </div>
-              <div>
-                <div class="label" data-i18n="compare.selfEvalDiff">自评差异</div>
-                <div class="list" id="list-compare-self-eval"></div>
-              </div>
-            </div>
-            <div class="block">
-              <div class="label" data-i18n="compare.positionDiff">仓位差异</div>
-              <div class="table" id="table-compare-positions"></div>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-hd">
-            <div class="card-title" data-i18n="alerts.title">告警</div>
-            <div class="card-note" data-i18n="alerts.note">alerts.jsonl（最新 200 条）</div>
-          </div>
-          <div class="list tall" id="list-alerts"></div>
-        </div>
-
-        <div class="card">
-          <div class="card-hd">
-            <div class="card-title" data-i18n="logs.title">系统日志</div>
-            <div class="card-note" data-i18n="logs.note">trading_system.log（尾部）</div>
-          </div>
-          <pre class="mono tall" id="text-log">—</pre>
-        </div>
-      </section>
-    </main>
-
-    <footer class="foot">
-      <div class="foot-inner">
-        <div class="foot-note" data-i18n="foot.note">本地巡检与回放面板，不暴露任何交易控制。</div>
-        <div class="foot-actions">
-          <label class="control-group" for="select-date">
-            <span class="control-label" data-i18n="controls.replayDate">回放日期</span>
-            <select class="select" id="select-date">
-              <option value="">最新</option>
-            </select>
-          </label>
-          <label class="control-group" for="select-compare-date">
-            <span class="control-label" data-i18n="controls.compareDate">对比日期</span>
-            <select class="select" id="select-compare-date">
-              <option value="">关闭</option>
-            </select>
-          </label>
-          <button class="btn" id="btn-date-latest" data-i18n="controls.latest">最新</button>
-          <button class="btn" id="btn-compare-clear" data-i18n="controls.clearCompare">清除对比</button>
-          <button class="btn" id="btn-refresh" data-i18n="controls.refresh">刷新</button>
-          <button class="btn" id="btn-lang-toggle">EN</button>
-        </div>
-      </div>
-    </footer>
 
     <script src="/app.js"></script>
   </body>

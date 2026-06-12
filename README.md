@@ -1,112 +1,99 @@
 # Macro Quant Agent
 
-[English](./README.md) | [简体中文](./README.zh-CN.md)
+LLM 驱动的宏观/科技股配置系统，基于 Python 构建，具备检索增强上下文、组合风控约束、回测、调度/心跳监控，以及本地 Dashboard 用于审计与回放。
 
-LLM-driven macro/tech equity allocation system built with Python, featuring retrieval-augmented context, portfolio risk controls, backtesting, scheduler/heartbeat monitoring, and a local dashboard for audit and replay.
+## 一览
 
-## At A Glance
+- LLM 驱动的每日配置计划，覆盖固定科技股池
+- 检索、验证、下单、对账、复盘一体化可审计流水线
+- 安全默认执行：`mock` 模式、`planning_only` 预览、kill switch、市场时段守卫
+- 回测、运行时心跳、告警、本地 Dashboard 支持回放与运维可见性
 
-- LLM-driven daily allocation planning over a fixed tech-stock universe
-- Retrieval, validation, order generation, reconciliation, and review in one auditable pipeline
-- Safe-by-default execution with `mock`, `planning_only`, kill switch, and market-session guards
-- Backtesting, runtime heartbeat, alerting, and a bilingual local dashboard for replay and operator visibility
+## Dashboard 预览
 
-## Demo
+### 主 Dashboard（投资者视角）
 
-### Dashboard Snapshot
+展示权益曲线、持仓、策略逻辑、新闻摘要、订单结果、每日复盘：
 
-English dashboard:
+![Dashboard Main](./docs/assets/readme/dashboard-en.png)
 
-![Dashboard English Demo](./docs/assets/readme/dashboard-en.png)
+### Monitor 页面（开发者视角）
 
-Chinese dashboard:
+展示 LLM 审计轨迹、执行明细、对账、Provider 健康、告警、运行时状态：
 
-![Dashboard Chinese Demo](./docs/assets/readme/dashboard-zh.png)
+![Dashboard Monitor](./docs/assets/readme/dashboard-zh.png)
 
-### Showcase Features
+### 核心交互
 
-- Review panel with `Auto Brief`, `LLM Review`, evidence weights, retrieval route, and self-evaluation
-- `planning_only` preview path that shows what would have been submitted without placing live orders
-- Multi-day compare view for strategy, cognitive-layer, and position deltas
-- Bilingual UI toggle for Chinese / English demos
+- 侧边栏配置 API Key（DeepSeek / Alpha Vantage / AnySearch），无需手动编辑 `.env`
+- 新闻卡片自动调用 LLM 生成当日摘要，原始数据可展开查看
+- 顶栏 `Monitor` 链接一键切换开发者监测页面
 
-## Project Status
+## 项目定位
 
-- Research preview, not production trading software
-- Safe by default: `BROKER_TYPE=mock` and live order submission requires explicit opt-in
-- Focused on engineering reliability, risk controls, auditability, and operator visibility
+大多数 LLM + 交易 Demo 止步于"生成一个 JSON 配置"。本项目更进一步，回答更难的工程问题：
 
-## Why This Project Exists
+- LLM 计划在到达执行层之前应该如何验证？
+- 如何让交易工作流可审计、可回放？
+- 研究系统应该有哪些风控约束？
+- 如何将策略逻辑与执行、调度、运维分离？
 
-Most LLM + trading demos stop at "generate a JSON allocation". This project goes further and tries to answer harder engineering questions:
+结果是一个模块化的量化研究系统，结合了：
 
-- How should an LLM plan be validated before it reaches execution?
-- How do you keep a trading workflow auditable and replayable?
-- What risk controls should exist even in a research system?
-- How do you separate strategy logic from execution, scheduling, and runtime operations?
+- 基于 LLM 的每日组合计划
+- RAG 式上下文组装（新闻、宏观、基本面、市场数据）
+- 执行前的硬性组合/风控约束
+- Mock 和 IBKR Broker 适配器
+- 向量化回测，含可信度摘要
+- 运行时心跳、kill switch、告警、本地 Dashboard
 
-The result is a modular quant research system that combines:
+## 功能概览
 
-- LLM-based daily portfolio planning
-- RAG-style context assembly from news, macro, fundamentals, and market data
-- Hard portfolio/risk constraints before execution
-- Mock and IBKR broker adapters
-- Vectorized backtesting with credibility summary
-- Runtime heartbeat, kill switch, alerting, and a local dashboard
+### 1. 每日 LLM 配置计划
 
-## Why It Is Portfolio-Worthy
+Agent 检索宏观、新闻、基本面、市场和 SEC EDGAR 公告上下文，然后让 LLM 在固定科技股池上生成组合权重。
 
-Many internship-level trading demos stop at prompt engineering. This repo is stronger as a systems project because it demonstrates:
+### 2. 执行前的风控约束
 
-- separation between planning, execution, review, and operations layers
-- explicit runtime and broker guardrails instead of "LLM decides and submits"
-- replayable local artifacts for decisions, reports, metrics, alerts, and snapshots
-- a presentable dashboard surface rather than terminal-only output
-- targeted regression coverage around runtime guards, review logic, and dashboard behavior
+系统在将 LLM 输出转为订单之前进行验证和清洗：
 
-## What It Can Do
+- 个股上限
+- 最低现金缓冲
+- 死区过滤
+- 最大持仓数
+- Top-3 集中度上限
+- 主题/风险组敞口上限
+- 最大日换手率缩放
 
-### 1. Daily LLM allocation planning
+### 3. 安全执行模式
 
-The agent retrieves macro, news, fundamental, market, and SEC EDGAR filing context, then asks the LLM to produce portfolio weights over a fixed tech universe.
+- `MockBroker` 支持本地模拟和状态持久化
+- `IBKRBroker` 支持 TWS / Gateway 连接
+- 未显式启用实盘交易时，系统仅生成 `planning_only` 决策，不下单
 
-### 2. Guardrails before any execution
+### 4. 回测和研究报告
 
-The system validates and cleans LLM output before turning it into orders:
+回测模块可在历史窗口上回放 LLM 计划，生成：
 
-- single-name cap
-- minimum cash buffer
-- deadband filtering
-- max holdings
-- top-3 concentration cap
-- thematic/risk-group exposure caps
-- max daily turnover scaling
+- 净值 / 基准图表
+- Sharpe 和最大回撤摘要
+- 关于快照覆盖率和合成价格回退的可信度说明
 
-### 3. Safe execution modes
+### 5. 运维可见性
 
-- `MockBroker` supports local simulation and state persistence
-- `IBKRBroker` supports TWS / Gateway connectivity
-- when live trading is not explicitly enabled, the system only generates a `planning_only` decision and does not place orders
+项目包含轻量级运维控制台：
 
-### 4. Backtest and research reporting
+- **主 Dashboard**（`/`）：投资者视角 — 权益曲线、持仓、策略逻辑、新闻摘要、订单结果、每日复盘
+- **Monitor 页面**（`/monitor`）：开发者视角 — LLM 审计轨迹、执行明细、对账 JSON、Provider 健康、告警、运行时状态
+- 心跳文件、调度器状态、kill switch 状态、告警和事件日志
 
-The backtest module can replay LLM plans over historical windows and generates:
+### 6. 前端配置
 
-- NAV / benchmark chart
-- Sharpe and max drawdown summary
-- credibility notes about snapshot coverage and synthetic-price fallback
+- 侧边栏直接填写 API Key（DeepSeek / Alpha Vantage / AnySearch），保存到 `.env`，无需手动编辑文件
+- 新闻卡片自动调用 LLM 生成当日摘要（缓存到 `snapshots/news_summary_*.json`），原始数据可展开查看
+- 两个页面共享同一后端，数据实时同步
 
-### 5. Runtime operations visibility
-
-The project includes a lightweight operator console:
-
-- local dashboard for strategy / execution / alerts / logs / equity curve
-- heartbeat file for recent run status
-- scheduler state
-- structured kill-switch state
-- alert and event logs for troubleshooting
-
-## Architecture
+## 架构
 
 ```text
 .
@@ -137,8 +124,13 @@ The project includes a lightweight operator console:
 ├── backtest/
 │   └── engine.py               # 向量化回测引擎
 ├── dashboard/
-│   ├── server.py               # 本地 HTTP API
+│   ├── server.py               # 本地 HTTP API + Settings API + News Summary API
 │   └── static/                 # 前端 UI
+│       ├── index.html          # 主 Dashboard（投资者视角）
+│       ├── monitor.html        # Monitor 页面（开发者视角）
+│       ├── app.js              # 主 Dashboard 逻辑
+│       ├── monitor.js          # Monitor 页面逻辑
+│       └── styles.css          # 共享样式
 ├── utils/                      # 运维与可观测性
 │   ├── heartbeat.py / kill_switch.py / alerting.py
 │   ├── metrics.py / review.py / trading_hours.py
@@ -149,7 +141,7 @@ The project includes a lightweight operator console:
 └── run_scheduler.py            # 轻量定时调度
 ```
 
-### Layered Architecture (Refactored)
+### 分层架构
 
 ```mermaid
 flowchart TB
@@ -247,7 +239,7 @@ flowchart TB
     style Observability fill:#fce4ec,stroke:#c62828,color:#000
 ```
 
-### Daily Routine Pipeline (v2 — via Services)
+### 每日流水线
 
 ```mermaid
 flowchart TD
@@ -277,49 +269,57 @@ flowchart TD
     style FIN fill:#e8f5e9,stroke:#2e7d32,color:#000
 ```
 
-## Tech Stack
+## 技术栈
 
 - Python 3.9+
 - `pandas`, `numpy`, `matplotlib`
-- `openai` SDK for OpenAI-compatible providers such as DeepSeek and Volcengine-compatible endpoints
+- `openai` SDK，兼容 DeepSeek 和火山引擎等 OpenAI 兼容端点
 - `yfinance`, `Alpha Vantage`
-- SEC EDGAR for official filing metadata (8-K, 10-Q, 10-K)
-- `ib_insync` for IBKR integration
-- `FRED` for macroeconomic indicators
-- `sqlite3` for structured data persistence (snapshots, ledger, metrics)
-- local JSON / JSONL persistence for dashboard-readable artifacts and runtime state
+- SEC EDGAR 官方公告元数据（8-K, 10-Q, 10-K）
+- `ib_insync` 用于 IBKR 集成
+- `FRED` 宏观经济指标
+- `sqlite3` 结构化数据持久化（快照、账本、指标）
+- 本地 JSON / JSONL 持久化，供 Dashboard 读取
 
-## Quick Start
+## 快速开始
 
-### 1. Install dependencies
+### 1. 安装依赖
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Create `.env`
+### 2. 启动 Dashboard 并在侧边栏配置 API Key
+
+```bash
+python3 dashboard/server.py
+```
+
+打开 `http://127.0.0.1:8010`，点击左上角菜单按钮，在侧边栏填写：
+
+- **DeepSeek API Key**（必填，用于 LLM 策略生成和新闻摘要）
+- **Alpha Vantage Key**（可选，提升基本面数据质量）
+- **AnySearch Key**（可选，增强新闻检索）
+
+点击 Save 即可保存到 `.env`，无需手动编辑文件。
+
+或者直接创建 `.env`：
 
 ```env
-ALPHA_VANTAGE_KEY=your_alpha_vantage_key_here
-
 DEEPSEEK_API_KEY=your_deepseek_api_key_here
-DEEPSEEK_MODEL=deepseek-v4-pro
+DEEPSEEK_MODEL=deepseek-chat
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 
 LLM_PROVIDER=deepseek
 LLM_THINKING_TYPE=enabled
 LLM_REASONING_EFFORT=high
 
-MARKET_TIMEZONE=America/New_York
-
-IBKR_HOST=127.0.0.1
-IBKR_PORT=7497
-IBKR_CLIENT_ID=1
-IBKR_DATA_CLIENT_ID=11
+ALPHA_VANTAGE_KEY=your_alpha_vantage_key_here
 
 BROKER_TYPE=mock
 ENABLE_LIVE_TRADING=false
 
+MARKET_TIMEZONE=America/New_York
 SEC_EDGAR_USER_AGENT=isolation-research/0.1 contact@example.com
 
 AGENT_SCHEDULER_ENABLED=false
@@ -332,169 +332,137 @@ DASHBOARD_TOKEN=
 ALERT_WEBHOOK_URL=
 ```
 
-Legacy `VOLCENGINE_*` variables are still supported for compatibility, but the current recommended demo path uses DeepSeek's official OpenAI-compatible endpoint.
-
-### 3. Run tests
+### 3. 运行测试
 
 ```bash
 python3 -m pytest -q
 ```
 
-### 4. Run the daily agent
+### 4. 运行每日 Agent
 
 ```bash
 python3 run_agent.py
 ```
 
-### 5. Run the backtest
+### 5. 运行回测
 
 ```bash
 python3 run_llm_backtest.py
 ```
 
-### 6. Run the dashboard
-
-```bash
-python3 dashboard/server.py
-```
-
-Default address:
-
-```text
-http://127.0.0.1:8010/
-```
-
-### 7. Run the scheduler
+### 6. 运行调度器
 
 ```env
 AGENT_SCHEDULER_ENABLED=true
 AGENT_SCHEDULE_TIME=16:10
 AGENT_SCHEDULE_TIMEZONE=America/New_York
-AGENT_SCHEDULE_POLL_SECONDS=30
 ```
 
 ```bash
 python3 run_scheduler.py
 ```
 
-## Safety Model
+## 安全模型
 
-This repo is intentionally conservative:
+本项目设计上偏保守：
 
-- default broker mode is `mock`
-- `ENABLE_LIVE_TRADING=true` is required before real IBKR submission
-- LLM output is validated and cleaned before execution
-- invalid output causes downgrade / skip-trade behavior instead of blind submission
-- kill switch can lock the system after serious runtime failures
-- planning can proceed even when execution is blocked by market session or runtime guardrails
+- 默认 broker 模式为 `mock`
+- 实盘交易需显式设置 `ENABLE_LIVE_TRADING=true`
+- LLM 输出在执行前经过验证和清洗
+- 无效输出触发降级/跳过交易，而非盲目提交
+- kill switch 可在严重运行故障后锁定系统
+- 即使执行被市场时段或运行时守卫阻止，计划仍可继续生成
 
-## Current Limitations
+## 当前局限
 
-This project is more than a toy, but it is still not a production-grade trading platform.
+本项目已超越玩具级别，但仍非生产级交易平台。
 
-- some data sources are rate-limit sensitive, especially `yfinance`
-- backtest credibility depends on point-in-time snapshot coverage
-- synthetic-price fallback is useful for demos but not strong evidence of strategy validity
-- persistence is transitioning from file-based to SQLite-backed; JSON files remain as a compatibility layer for the dashboard
-- dashboard is local-first and designed for inspection, not multi-user deployment
+- 部分数据源对限流敏感，尤其是 `yfinance`
+- 回测可信度取决于时点快照覆盖率
+- 合成价格回退适用于 Demo，但不是策略有效性的有力证据
+- 持久化正在从文件向 SQLite 迁移；JSON 文件作为 Dashboard 兼容层保留
+- Dashboard 为本地优先设计，面向单用户检查，非多用户部署
 
-## Project Highlights
+## 项目亮点
 
-| Dimension | What It Covers |
+| 维度 | 覆盖范围 |
 |---|---|
-| **Planning** | Daily LLM allocation over a fixed tech universe, evidence-grounded with macro/news/fundamental/market context |
-| **Guardrails** | Single-name cap, deadband, max holdings, concentration limits, thematic-risk-group exposure caps, max daily turnover |
-| **Execution** | Dual broker adapters (Mock + IBKR), `planning_only` preview, market-session awareness |
-| **Review** | Auto Brief, LLM Review, evidence weights, retrieval route provenance, self-evaluation, multi-day cognitive comparison |
-| **Audit** | Decision snapshots, daily reports, review sidecars, execution ledgers, heartbeat events — all local and replayable |
-| **Operations** | Scheduler, kill switch, heartbeat/alerting, provider-health tracking, runtime event log |
-| **Dashboard** | Bilingual (中/EN) web UI with replay, compare, cognitive-layer inspection, and would-submit preview |
-| **Backtest** | Vectorized LLM-plan replay, NAV/benchmark charts, Sharpe/max-drawdown, credibility summary |
-| **Safety** | `mock` by default, `ENABLE_LIVE_TRADING` opt-in, kill-switch locking, RTH guards, validator repair/downgrade path |
-| **Testing** | Regression suite covering portfolio rules, dashboard auth, runtime guards, review logic, scheduler, reconciliation, report generation |
+| **计划** | 每日 LLM 配置，覆盖固定科技股池，以宏观/新闻/基本面/市场上下文为证据 |
+| **风控** | 个股上限、死区、最大持仓、集中度限制、主题风险组敞口、最大日换手率 |
+| **执行** | 双 Broker 适配器（Mock + IBKR）、`planning_only` 预览、市场时段感知 |
+| **复盘** | 自动简报、LLM Review、证据权重、检索路由溯源、自评、多日对比 |
+| **审计** | 决策快照、日报、复盘附件、执行账本、心跳事件 — 全部本地可回放 |
+| **运维** | 调度器、kill switch、心跳/告警、Provider 健康追踪、运行时事件日志 |
+| **Dashboard** | 双页面设计：主 Dashboard（投资者）+ Monitor（开发者），侧边栏配置 API Key，LLM 新闻摘要 |
+| **回测** | 向量化 LLM 计划回放、净值/基准图表、Sharpe/最大回撤、可信度摘要 |
+| **安全** | 默认 `mock`、`ENABLE_LIVE_TRADING` 显式启用、kill switch 锁定、RTH 守卫、验证器修复/降级路径 |
+| **测试** | 回归套件覆盖组合规则、Dashboard 认证、运行时守卫、复盘逻辑、调度器、对账、报告生成 |
 
-## How To Demo In 2 Minutes
-
-Paste these commands for a self-contained walkthrough:
+## 2 分钟 Demo
 
 ```bash
-# 1. Run unit tests (no external services needed)
+# 1. 运行单元测试（无需外部服务）
 python3 -m pytest -q
 
-# 2. Run a safe planning-only cycle (mock broker, DeepSeek LLM)
+# 2. 运行安全的 planning-only 循环（mock broker + DeepSeek LLM）
 python3 run_agent.py
-# Inspect the decision artifact:
-#   cat decision_*.json | python3 -m json.tool | head -80
 
-# 3. Generate a daily report with LLM review
-python3 reports/generate_daily_report.py
-# Inspect the review sidecar:
-#   cat reports/daily_report_*.review.json | python3 -m json.tool | head -60
-
-# 4. Launch the dashboard
+# 3. 启动 Dashboard
 python3 dashboard/server.py &
 open http://127.0.0.1:8010
-# The dashboard shows review, auto-brief, evidence weights, and would-submit preview.
-# Click "中文 / EN" to switch languages.
+# 主 Dashboard 展示权益曲线、持仓、策略、新闻摘要、订单、复盘
+# 点击顶栏 Monitor 进入开发者监测页面
+# 点击左上角菜单在侧边栏配置 API Key
 ```
 
-### Presentation talking points
-
-1. Start with the dashboard screenshots above.
-2. Explain the safety model: `mock` by default, `planning_only` unless live trading is explicitly enabled.
-3. Walk through `run_agent.py` → `core/agent.py` → `execution/portfolio.py` → dashboard / reports.
-4. Open a decision snapshot and show audit metadata plus evidence provenance.
-5. Mention the bilingual dashboard for different audiences.
-
-## Main Entrypoints
+## 主要入口
 
 - `python3 run_agent.py`
 - `python3 run_llm_backtest.py`
 - `python3 run_scheduler.py`
 - `python3 dashboard/server.py`
 
-The `legacy/` directory only preserves earlier experiments and is not part of the current production path of the project.
+`legacy/` 目录仅保留早期实验，不属于当前生产路径。
 
-## Project Status
+## 项目状态
 
-**This project is in maintenance mode.** The core pipeline (RAG → LLM planning → portfolio risk control → broker execution → reconciliation → Dashboard) is fully operational and has been validated with live IBKR paper trades on TWS. All items from the original improvement checklist have been completed.
+核心流水线（RAG → LLM 计划 → 组合风控 → Broker 执行 → 对账 → Dashboard）已完全可用，并通过 TWS 上的 IBKR 模拟交易验证。
 
-### Completed improvements (since v5)
+### 已完成改进
 
-| Area | Summary |
+| 领域 | 概要 |
 |---|---|
-| Architecture | Monolithic 283-line `run_daily_routine()` decomposed into 4 injected Service classes (Planning, Execution, Persistence, Ops); `legacy/` preserves originals |
-| Data layer | 1300-line `retriever.py` refactored with a common `_fetch_with_providers()` engine, WebSearch news source replacing Alpha Vantage |
-| Type safety | mypy clean across key planning, execution, and validation modules |
-| Persistence | SQLite via `data/store.py`, JSON/JSONL kept for Dashboard readability |
-| Attribution | `portfolio_attribution` fields with highlight extraction |
-| Error handling | All Service methods return `{"success": bool, "status": "...", ...}` — no more `return None` ambiguity |
-| Dashboard tests | 17 API integration tests + 7 Playwright e2e tests covering date replay and multi-day compare |
-| Config | Single `config.py` split into `config/secrets.py`, `risk.py`, `broker.py`; original preserved in `legacy/config.py` |
-| Broker | IBKR TWS paper-trade verified with 3 live market orders (SELL NVDA, BUY AAPL, BUY TSLA), full reconciliation OK |
+| 架构 | 283 行单体 `run_daily_routine()` 分解为 4 个注入式 Service 类（Planning, Execution, Persistence, Ops） |
+| 数据层 | `_fetch_with_providers()` 通用引擎，WebSearch 新闻源替代 Alpha Vantage |
+| 类型安全 | 关键 planning、execution、validation 模块 mypy clean |
+| 持久化 | SQLite via `data/store.py`，JSON/JSONL 保留供 Dashboard 读取 |
+| 归因 | `portfolio_attribution` 字段与亮点提取 |
+| 错误处理 | 所有 Service 方法返回 `{"success": bool, "status": "...", ...}` |
+| Dashboard 测试 | 17 个 API 集成测试 + 7 个 Playwright e2e 测试 |
+| 配置 | `config.py` 拆分为 `config/secrets.py`, `risk.py`, `broker.py` |
+| Broker | IBKR TWS 模拟交易验证（3 笔市价单，完整对账） |
+| 前端 | 双页面设计（投资者 Dashboard + 开发者 Monitor），侧边栏 API Key 配置，LLM 新闻摘要 |
 
-### Deliberately not pursued
+### 刻意不做的方向
 
-| Direction | Rationale |
+| 方向 | 理由 |
 |---|---|
-| Multi-strategy integration | LLM already fuses multiple logics in a single inference; hardcoded strategy templates reduce flexibility |
-| Vector RAG | Semantic retrieval suits Q&A, not quant workflows that rely on structured facts and real-time prices |
-| Production scheduler (APScheduler) | Lightweight polling is adequate for mock mode; TWS' own scheduled strategies can replace the scheduler in IBKR mode |
+| 多策略集成 | LLM 已在单次推理中融合多种逻辑；硬编码策略模板降低灵活性 |
+| 向量 RAG | 语义检索适合 Q&A，不适合依赖结构化事实和实时价格的量化工作流 |
+| 生产调度器（APScheduler） | 轻量轮询对 mock 模式足够；IBKR 模式下 TWS 自身调度可替代 |
 
-Detailed project review and design decisions are maintained in `docs/Project-Review.md`.
+## CI 与代码质量
 
-## CI and Code Quality
-
-This project uses `ruff` for linting and `pytest` for testing, enforced via GitHub Actions on every push to `main` and on pull requests. The lint rules (configured in `.ruff.toml`) target bug-prone patterns only (unused imports, ambiguous variable names, missing f-string placeholders), deliberately keeping a low-noise baseline suitable for fast research iteration.
+使用 `ruff` 进行 lint、`pytest` 进行测试，通过 GitHub Actions 在每次 push 到 `main` 和 PR 时执行。
 
 ```bash
 python3 -m ruff check .        # lint
-python3 -m pytest -q            # run all tests
+python3 -m pytest -q            # 运行所有测试
 ```
 
-## Audit Example
+## 审计示例
 
-An audited `decision_YYYY-MM-DD.json` plan can now carry evidence provenance like this:
+审计过的 `decision_YYYY-MM-DD.json` 计划可携带证据溯源：
 
 ```json
 {
@@ -511,12 +479,10 @@ An audited `decision_YYYY-MM-DD.json` plan can now carry evidence provenance lik
 }
 ```
 
-This keeps the review path lightweight while still letting the dashboard and snapshots answer where a quote came from, which chunk produced it, and when it was observed.
+## 免责声明
 
-## Disclaimer
+本项目仅供工程探索、研究和技术演示。不构成投资建议，任何 LLM 生成的配置应视为实验输出，而非投资推荐。
 
-This project is for engineering exploration, research, and technical demonstration only. It does not constitute financial advice, and any LLM-generated allocation should be treated as experimental output rather than an investment recommendation.
-
-## License
+## 许可
 
 MIT. See `LICENSE`.
