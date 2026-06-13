@@ -172,3 +172,29 @@ class FMPProvider(DataProvider):
         except Exception as e:
             logger.warning(f"FMP news fetch failed: {e}")
             return None
+
+    # ---- sector / industry classification ----
+
+    def fetch_sector_map(self, tickers: list[str]) -> dict[str, dict]:
+        """Return {ticker: {"sector": str, "industry": str}} for each ticker.
+
+        Uses the /stable/profile endpoint (1 call per ticker).
+        Returns partial results on individual ticker failures.
+        """
+        key = _fmp_key()
+        if not key:
+            return {}
+        result = {}
+        for ticker in tickers:
+            try:
+                url = f"{_FMP_STABLE}/profile?symbol={ticker}&apikey={key}"
+                data = _http_get_json(url)
+                if isinstance(data, list) and data:
+                    p = data[0]
+                    result[ticker] = {
+                        "sector": str(p.get("sector") or "").strip(),
+                        "industry": str(p.get("industry") or "").strip(),
+                    }
+            except Exception as e:
+                logger.warning(f"FMP profile fetch failed for {ticker}: {e}")
+        return result

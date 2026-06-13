@@ -302,8 +302,17 @@ class VolcengineLLMClient:
         prompt_version = get_prompt_version()
         system_prompt = get_system_prompt_text()
 
+        # Load self-improving memory rules
+        memory_rules_section = ""
+        try:
+            from core.memory import get_rules_prompt_section
+            memory_rules_section = get_rules_prompt_section()
+        except Exception:
+            pass
+
         prompt = f"""
         {policy_text}
+        {memory_rules_section}
 
         可用策略目录（你必须从中选择 1-3 个策略 id 作为本次决策的依据）：
         {strategy_catalog}

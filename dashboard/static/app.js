@@ -385,6 +385,7 @@ function populateSettingsFields(settings) {
   document.getElementById("set-alphavantage-key").value = settings.ALPHA_VANTAGE_KEY || "";
   document.getElementById("set-anysearch-key").value = settings.ANYSEARCH_API_KEY || "";
   document.getElementById("set-broker-type").value = settings.BROKER_TYPE || "mock";
+  document.getElementById("set-tech-universe").value = settings.TECH_UNIVERSE || "";
   TOGGLE_FIELDS.forEach(({ inputId, labelId, key }) => {
     const checked = _parseBoolEnv(settings[key]);
     document.getElementById(inputId).checked = checked;
@@ -415,6 +416,8 @@ async function saveSettings() {
   if (model !== (loadedSettings.DEEPSEEK_MODEL || "")) payload.DEEPSEEK_MODEL = model;
   const brokerType = document.getElementById("set-broker-type").value;
   if (brokerType !== (loadedSettings.BROKER_TYPE || "mock")) payload.BROKER_TYPE = brokerType;
+  const universe = document.getElementById("set-tech-universe").value.trim().toUpperCase();
+  if (universe !== (loadedSettings.TECH_UNIVERSE || "").toUpperCase()) payload.TECH_UNIVERSE = universe;
   TOGGLE_FIELDS.forEach(({ inputId, key }) => {
     const checked = document.getElementById(inputId).checked;
     const loadedChecked = _parseBoolEnv(loadedSettings[key]);
@@ -629,6 +632,24 @@ TOGGLE_FIELDS.forEach(({ inputId, labelId }) => {
 });
 
 document.getElementById("btn-save-settings").addEventListener("click", () => saveSettings());
+
+/* ── Preset universe templates ── */
+const PRESET_UNIVERSES = {
+  tech_growth: "AAPL,MSFT,NVDA,GOOGL,META,AMZN,TSLA,PLTR,MU",
+  large_cap_value: "BRK-B,JPM,JNJ,PG,UNH,HD,V,MA,LLY",
+  dividend_income: "AAPL,MSFT,JNJ,PG,KO,VZ,PEP,AVGO,XOM,CVX",
+  mixed_balanced: "AAPL,MSFT,JPM,UNH,XOM,CVX,AMZN,NVDA,PG",
+};
+
+document.querySelectorAll(".preset-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const preset = btn.dataset.preset;
+    const tickers = PRESET_UNIVERSES[preset];
+    if (tickers) {
+      document.getElementById("set-tech-universe").value = tickers;
+    }
+  });
+});
 document.getElementById("btn-refresh").addEventListener("click", () => refresh().catch((e) => console.error(e)));
 document.getElementById("btn-date-latest").addEventListener("click", () => {
   selectedDate = "";

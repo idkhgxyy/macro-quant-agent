@@ -202,6 +202,32 @@ body {
   color: var(--text);
 }
 
+/* ── Preset Buttons ── */
+
+.preset-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.preset-btn {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-family: "DM Sans", sans-serif;
+  border: 1px solid rgba(103, 232, 249, 0.25);
+  border-radius: 6px;
+  background: rgba(103, 232, 249, 0.06);
+  color: var(--accent);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.preset-btn:hover {
+  background: rgba(103, 232, 249, 0.15);
+  border-color: var(--accent);
+}
+
 /* ── Toggle Switch ── */
 
 .sb-toggle-field {

@@ -94,11 +94,16 @@ class MacroQuantAgent:
                 return
 
             plan_result = self._generate_plan(planning, ctx, date_str, metrics)
+            # Store memory-relevant data in metrics for _finalize_run
+            metrics["_memory_reasoning"] = plan_result.get("reasoning", "")
+            metrics["_memory_allocations"] = plan_result.get("target_weights", {})
             if self._handle_plan_gate(plan_result, persistence, ctx, date_str, market_session, run_start_ts):
                 status = "invalid"
                 return
 
             proposed_orders = self._apply_plan_metrics(plan_result, metrics)
+            metrics["_memory_orders"] = proposed_orders
+            metrics["_memory_market_context"] = ctx.get("macro_data", "")
             if self._is_no_trade(plan_result):
                 self._persist_no_trade(persistence, plan_result, ctx, date_str, market_session, run_start_ts)
                 status = "no_trade"
@@ -404,3 +409,17 @@ class MacroQuantAgent:
                     merged["kill_switch_reason"] = reason
                     persistence.save_decision_snapshot(str(metrics.get("date")), merged)
                 ops.trigger_kill_switch(f"alert_policy:{reason}", source="alert.policy", trigger_event={"date": str(metrics.get("date")), "broker": BROKER_TYPE, "status": str(metrics.get("status")), "policy_items": notify_result.get("items")})
+
+        # Record experience for Self-Improving Memory
+        if status in ("traded", "filled", "partial", "planning_only", "no_trade") and metrics.get("_memory_reasoning"):
+            try:
+                from core.memory import record_experience
+                record_experience(
+                    date_str=date_str,
+                    decision_summary=metrics.get("_memory_reasoning", ""),
+                    allocations=metrics.get("_memory_allocations", {}),
+                    orders=metrics.get("_memory_orders", []),
+                    market_context=metrics.get("_memory_market_context", ""),
+                )
+            except Exception as e:
+                logger.warning(f"[Memory] Failed to record experience: {e}")
