@@ -87,7 +87,22 @@ After non-trivial changes, verify the smallest meaningful surface.
 
 **When adding a new file, always add a module-level docstring at line 1** — see `AGENT.md` "Always Add Module-Level Docstrings for AI Agents" for the rule and examples. The primary readers of this codebase are AI agents, and docstrings are how they decide which files to read.
 
-Common commands are listed in `AGENT.md` → Commands. Use targeted test runs (e.g. `python3 -m pytest -q tests/test_portfolio_manager.py`) when the change is scoped to one module.
+### CI Checks (run before every push)
+
+These mirror the GitHub Actions CI pipeline (`.github/workflows/ci.yml`). All must pass:
+
+```bash
+# 1. Lint
+python3 -m ruff check .
+
+# 2. Type check
+python3 -m mypy --explicit-package-bases core/agent.py execution/portfolio.py execution/broker.py execution/reconcile.py llm/validator.py
+
+# 3. Tests (skip flaky E2E UI tests)
+python3 -m pytest -q --ignore=tests/test_dashboard_e2e.py
+```
+
+Use targeted test runs (e.g. `python3 -m pytest -q tests/test_portfolio_manager.py`) when the change is scoped to one module.
 
 ## Output Expectations
 

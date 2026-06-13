@@ -40,7 +40,7 @@ def _load_memory() -> dict:
     return {"experiences": [], "rules": [], "last_reflection": None}
 
 
-def _save_memory(data: dict):
+def _save_memory(data: dict) -> None:
     """Persist memory to disk."""
     try:
         mem_dir = _memory_dir()
@@ -137,15 +137,19 @@ def _trigger_reflection(memory: dict) -> None:
 输出格式: {{"rules": [...]}}"""
 
     try:
-        from llm.volcengine import VolcEngineClient
-        client = VolcEngineClient()
-        response = client.chat([{"role": "user", "content": prompt}], temperature=0.3)
-        if not response:
+        from config.secrets import VOLCENGINE_API_KEY, VOLCENGINE_MODEL_ENDPOINT
+        from llm.volcengine import VolcengineLLMClient
+        if not VOLCENGINE_API_KEY or not VOLCENGINE_MODEL_ENDPOINT:
+            logger.warning("[Memory] LLM credentials not configured, skipping reflection")
+            return
+        client = VolcengineLLMClient(api_key=VOLCENGINE_API_KEY, model_endpoint=VOLCENGINE_MODEL_ENDPOINT)
+        completion = client._create_chat_completion(system_prompt="你是量化交易复盘助手。", user_prompt=prompt, temperature=0.3)
+        if not completion or not completion.choices:
             logger.warning("[Memory] LLM reflection returned empty")
             return
 
         # Parse the response
-        text = response.strip()
+        text = (completion.choices[0].message.content or "").strip()
         # Try to extract JSON from the response
         start = text.find("{")
         end = text.rfind("}") + 1
@@ -160,7 +164,7 @@ def _trigger_reflection(memory: dict) -> None:
             else:
                 logger.warning("[Memory] LLM reflection: rules is not a list")
         else:
-            logger.warning(f"[Memory] Could not parse LLM reflection response")
+            logger.warning("[Memory] Could not parse LLM reflection response")
     except Exception as e:
         logger.warning(f"[Memory] Reflection failed: {e}")
 

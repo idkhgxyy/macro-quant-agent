@@ -168,7 +168,6 @@ class MemoryAgentIntegrationTests(unittest.TestCase):
         from core.persistence import PersistenceService
         from core.ops import OpsService
         from execution.broker import MockBroker
-        from config import TECH_UNIVERSE
 
         # Import test helpers
         from tests.test_agent_integration import (
