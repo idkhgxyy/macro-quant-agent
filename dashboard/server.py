@@ -12,6 +12,9 @@ ROOT = os.path.dirname(os.path.dirname(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+# Ensure dotenv is loaded so FMP_API_KEY etc. are available
+import config  # noqa: F401 — side-effect: load_dotenv()
+
 from llm.volcengine import build_review_summary_fallback
 from utils.review import build_auto_daily_brief, build_day_review
 from utils.heartbeat import HeartbeatStore
@@ -235,6 +238,36 @@ SETTINGS_KEYS = [
 ]
 
 SECRET_KEYS = {"DEEPSEEK_API_KEY", "FMP_API_KEY", "ALPHA_VANTAGE_KEY", "ANYSEARCH_API_KEY"}
+
+
+def _validate_api_key(key: str, value: str) -> Optional[str]:
+    """Validate an API key by making a lightweight test call. Returns error message or None if valid."""
+    try:
+        import requests as _req
+        if key == "FMP_API_KEY":
+            resp = _req.get(f"https://financialmodelingprep.com/stable/profile?symbol=AAPL&apikey={value}", timeout=10)
+            if resp.status_code == 401:
+                return "FMP API Key 无效 (401 Unauthorized)"
+            if resp.status_code == 402:
+                return None  # Key is valid, just some endpoints require paid plan
+            if resp.status_code >= 400:
+                return f"FMP API Key 验证失败 (HTTP {resp.status_code})"
+            return None
+        if key == "DEEPSEEK_API_KEY":
+            base_url = os.getenv("LLM_BASE_URL", "https://api.deepseek.com")
+            resp = _req.get(f"{base_url}/models", headers={"Authorization": f"Bearer {value}"}, timeout=10)
+            if resp.status_code == 401:
+                return "DeepSeek API Key 无效 (401 Unauthorized)"
+            return None
+        if key == "ALPHA_VANTAGE_KEY":
+            resp = _req.get(f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=AAPL&apikey={value}&outputsize=compact&datatype=json", timeout=10)
+            data = resp.json() if resp.status_code == 200 else {}
+            if isinstance(data, dict) and "Error Message" in data and "Invalid API call" in str(data.get("Error Message", "")):
+                return "Alpha Vantage API Key 无效"
+            return None
+    except Exception as e:
+        return f"验证请求失败: {e}"
+    return None
 
 
 def _mask_secret(value: str) -> str:
@@ -532,15 +565,25 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             env_data = _read_env_file(env_path)
 
             to_write = {}
+            validation_errors = {}
             for key in SETTINGS_KEYS:
                 if key not in payload:
                     continue
                 value = str(payload[key]).strip() if payload[key] is not None else ""
+                if value and key in SECRET_KEYS:
+                    # Validate API key before saving
+                    error = _validate_api_key(key, value)
+                    if error:
+                        validation_errors[key] = error
+                        continue
                 if value:
                     to_write[key] = value
                 elif key in env_data:
                     # Remove the key by writing empty — _write_env_file will skip it
                     pass
+
+            if validation_errors:
+                return self._send_json({"ok": False, "validation_errors": validation_errors, "saved": list(to_write.keys())}, code=400)
 
             # For keys with empty values, remove them from env_data before writing
             # so _write_env_file drops those lines
@@ -681,6 +724,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             date = (qs.get("date") or [None])[0]
             lang = (qs.get("lang") or ["zh"])[0]
             return self._send_json(_get_news_summary(date, lang))
+
+        if path == "/api/memory/stats":
+            try:
+                from core.memory import get_memory_stats, get_active_rules
+                stats = get_memory_stats()
+                stats["rules"] = get_active_rules()
+                return self._send_json(stats)
+            except Exception as e:
+                return self._send_json({"error": str(e), "experience_count": 0, "rule_count": 0})
 
         return self._send_error(404, "not_found", f"Unknown API path: {path}")
 

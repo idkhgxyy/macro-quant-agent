@@ -153,7 +153,7 @@ class FMPProvider(DataProvider):
     # ---- news ----
 
     def fetch_news(self) -> Optional[str]:
-        """FMP free tier may not include news; returns None so fallback chain continues."""
+        """FMP free tier does not include stock-news (returns 404); returns None so fallback chain continues."""
         key = _fmp_key()
         if not key:
             return None
@@ -170,7 +170,12 @@ class FMPProvider(DataProvider):
                 items.append(f"标题: {title}\n摘要: {text[:300]}\n来源: {source}")
             return "\n\n".join(items)
         except Exception as e:
-            logger.warning(f"FMP news fetch failed: {e}")
+            err_str = str(e)
+            # 404 means the endpoint is not available on free tier — not a real error
+            if "404" in err_str:
+                logger.info("[FMP] stock-news endpoint not available (free tier), skipping")
+            else:
+                logger.warning(f"FMP news fetch failed: {e}")
             return None
 
     # ---- sector / industry classification ----

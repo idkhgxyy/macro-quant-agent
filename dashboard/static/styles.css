@@ -228,6 +228,67 @@ body {
   border-color: var(--accent);
 }
 
+/* ── Memory Stats ── */
+
+.memory-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mem-stat {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.mem-stat:last-child {
+  border-bottom: none;
+}
+
+.mem-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.mem-val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.mem-rules {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mem-rule-item {
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: rgba(255,255,255,.04);
+  border-left: 3px solid var(--muted);
+  color: var(--fg);
+  line-height: 1.4;
+}
+
+.mem-rule-item.conf-high {
+  border-left-color: #22c55e;
+}
+
+.mem-rule-item.conf-mid {
+  border-left-color: #eab308;
+}
+
+.mem-rule-item.conf-low {
+  border-left-color: #ef4444;
+}
+
 /* ── Toggle Switch ── */
 
 .sb-toggle-field {

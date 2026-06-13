@@ -673,5 +673,37 @@ document.getElementById("btn-lang-toggle").addEventListener("click", () => {
 
 document.getElementById("btn-lang-toggle").textContent = currentLang === "zh" ? "EN" : "中文";
 loadSettings();
+loadMemoryStats();
 refresh().catch((e) => console.error(e));
 setInterval(() => { refresh().catch((e) => console.error(e)); }, 60000);
+setInterval(() => { loadMemoryStats(); }, 120000);
+
+/* ── Memory Stats ── */
+
+async function loadMemoryStats() {
+  try {
+    const data = await jget("/api/memory/stats");
+    const expEl = document.getElementById("mem-exp-count");
+    const ruleEl = document.getElementById("mem-rule-count");
+    const refEl = document.getElementById("mem-last-ref");
+    const rulesList = document.getElementById("mem-rules-list");
+
+    if (expEl) expEl.textContent = data.experience_count ?? "—";
+    if (ruleEl) ruleEl.textContent = data.rule_count ?? "—";
+    if (refEl) refEl.textContent = data.last_reflection ? `#${data.last_reflection}` : "—";
+
+    if (rulesList && Array.isArray(data.rules)) {
+      rulesList.innerHTML = "";
+      for (const r of data.rules) {
+        const conf = parseFloat(r.confidence || 0);
+        const cls = conf >= 0.7 ? "conf-high" : conf >= 0.5 ? "conf-mid" : "conf-low";
+        const div = document.createElement("div");
+        div.className = `mem-rule-item ${cls}`;
+        div.textContent = `${r.id ? "[" + r.id + "] " : ""}${r.rule || ""} (${(conf * 100).toFixed(0)}%)`;
+        rulesList.appendChild(div);
+      }
+    }
+  } catch (e) {
+    console.error("Failed to load memory stats:", e);
+  }
+}
